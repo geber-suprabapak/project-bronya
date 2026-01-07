@@ -1,133 +1,242 @@
 "use server";
 
+import { createClient } from "~/lib/supabase-server";
 import { db } from "~/server/db";
-import { userProfiles, absences } from "~/server/db/schema";
-import { eq, and } from "drizzle-orm";
+import { userProfiles } from "~/server/db/schema";
+import { eq } from "drizzle-orm";
+
+type AttendanceActionResponse = {
+    actionable: boolean;
+    action_type: "check_in" | "check_out" | "none";
+    message: string;
+    details: {
+        location_name?: string;
+        status?: string;
+    } | null;
+};
+
+type AbsenceData = {
+    userName: string;
+    nis: string;
+    className: string;
+    status: string;
+    date: string;
+    actionType: "check_in" | "check_out" | "none";
+    actionable: boolean;
+};
 
 type AbsenceResult = {
     success: boolean;
     message: string;
     alreadyPresent?: boolean;
-    data?: {
-        userName: string;
-        nis: string;
-        className: string;
-        status: string;
-        date: string;
-    };
+    data?: AbsenceData;
 };
 
-export async function checkNisAndCreateAbsence(
-    nis: string
+const formatDisplayDate = (date: Date) =>
+    date.toLocaleDateString("id-ID", {
+        weekday: "long",
+        year: "numeric",
+        month: "long",
+        day: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+    });
+
+const findUserByNis = async (nis: string) => {
+    const result = await db
+        .select()
+        .from(userProfiles)
+        .where(eq(userProfiles.nis, nis))
+        .limit(1);
+    return result[0];
+};
+
+export async function checkAttendanceStatus(
+    nis: string,
+    latitude: number,
+    longitude: number
 ): Promise<AbsenceResult> {
     try {
-        // Find user by NIS
-        const user = await db
-            .select()
-            .from(userProfiles)
-            .where(eq(userProfiles.nis, nis))
-            .limit(1);
+        const userProfile = await findUserByNis(nis);
 
-        if (user.length === 0) {
-            return {
-                success: false,
-                message: `NIS "${nis}" tidak ditemukan dalam sistem`,
-            };
+        if (!userProfile) {
+            return { success: false, message: `NIS "${nis}" tidak ditemukan dalam sistem` };
         }
 
-        const userProfile = user[0]!;
-
-        // Get current date in YYYY-MM-DD format
-        const today = new Date();
-        const dateStr = today.toISOString().split("T")[0]!;
-
-        // Check if student already has absence record for today
-        const existingAbsence = await db
-            .select()
-            .from(absences)
-            .where(
-                and(
-                    eq(absences.userId, userProfile.userId),
-                    eq(absences.date, dateStr)
-                )
-            )
-            .limit(1);
-
-        // Format date for display
-        const displayDate = today.toLocaleDateString("id-ID", {
-            weekday: "long",
-            year: "numeric",
-            month: "long",
-            day: "numeric",
-            hour: "2-digit",
-            minute: "2-digit",
+        const supabase = await createClient();
+        const { data, error } = await supabase.rpc("get_and_validate_attendance_action", {
+            p_user_id: userProfile.userId,
+            p_user_lat: latitude,
+            p_user_lon: longitude,
         });
 
-        if (existingAbsence.length > 0) {
+        if (error) {
+            console.error("RPC Error:", error);
+            return { success: false, message: "Gagal mengecek status absensi" };
+        }
+
+        const result = data as AttendanceActionResponse;
+        const displayDate = formatDisplayDate(new Date());
+
+        const statusLabel = result.action_type === "check_in"
+            ? (result.details?.status ?? "Hadir")
+            : result.action_type === "check_out"
+                ? "Pulang"
+                : "Selesai";
+
+        return {
+            success: true,
+            alreadyPresent: !result.actionable && result.action_type === "none",
+            message: result.message,
+            data: {
+                userName: userProfile.fullName ?? "Unknown",
+                nis: userProfile.nis ?? nis,
+                className: userProfile.className ?? "-",
+                status: statusLabel,
+                date: displayDate,
+                actionType: result.action_type,
+                actionable: result.actionable,
+            },
+        };
+    } catch (error) {
+        console.error("Error checking attendance:", error);
+        return { success: false, message: "Terjadi kesalahan saat mengecek status absensi" };
+    }
+}
+
+export async function saveAttendance(
+    nis: string,
+    actionType: "check_in" | "check_out",
+    latitude: number,
+    longitude: number,
+    photoPath?: string
+): Promise<AbsenceResult> {
+    try {
+        const userProfile = await findUserByNis(nis);
+
+        if (!userProfile) {
+            return { success: false, message: `NIS "${nis}" tidak ditemukan dalam sistem` };
+        }
+
+        const supabase = await createClient();
+        const { data, error } = await supabase.rpc("save_attendance_record", {
+            p_user_id: userProfile.userId,
+            p_action_type: actionType,
+            p_photo_path: photoPath ?? null,
+            p_latitude: latitude,
+            p_longitude: longitude,
+        });
+
+        if (error) {
+            console.error("RPC Error:", error);
+            return { success: false, message: "Gagal menyimpan absensi" };
+        }
+
+        const result = data as { success: boolean; message: string; attendance_id?: string };
+        const displayDate = formatDisplayDate(new Date());
+
+        if (!result.success) {
+            return { success: false, message: result.message };
+        }
+
+        const statusLabel = actionType === "check_in" ? "Hadir" : "Pulang";
+
+        return {
+            success: true,
+            message: result.message,
+            data: {
+                userName: userProfile.fullName ?? "Unknown",
+                nis: userProfile.nis ?? nis,
+                className: userProfile.className ?? "-",
+                status: statusLabel,
+                date: displayDate,
+                actionType: actionType,
+                actionable: false,
+            },
+        };
+    } catch (error) {
+        console.error("Error saving attendance:", error);
+        return { success: false, message: "Terjadi kesalahan saat menyimpan absensi" };
+    }
+}
+
+export async function checkNisAndCreateAbsence(nis: string): Promise<Omit<AbsenceResult, 'data'> & { data?: Omit<AbsenceData, 'actionType' | 'actionable'> }> {
+    try {
+        const userProfile = await findUserByNis(nis);
+
+        if (!userProfile) {
+            return { success: false, message: `NIS "${nis}" tidak ditemukan dalam sistem` };
+        }
+
+        const supabase = await createClient();
+
+        const { data: statusData, error: statusError } = await supabase.rpc("get_and_validate_attendance_action", {
+            p_user_id: userProfile.userId,
+            p_user_lat: -7.449980,
+            p_user_lon: 110.223600,
+        });
+
+        if (statusError) {
+            console.error("RPC Error:", statusError);
+            return { success: false, message: "Gagal mengecek status absensi" };
+        }
+
+        const status = statusData as AttendanceActionResponse;
+        const displayDate = formatDisplayDate(new Date());
+
+        if (!status.actionable) {
+            const statusLabel = status.action_type === "none" ? "Selesai" : status.details?.status ?? "Hadir";
             return {
                 success: false,
                 alreadyPresent: true,
-                message: "Anda sudah melakukan presensi hari ini!",
+                message: status.message,
                 data: {
                     userName: userProfile.fullName ?? "Unknown",
                     nis: userProfile.nis ?? nis,
                     className: userProfile.className ?? "-",
-                    status: existingAbsence[0]!.status,
+                    status: statusLabel,
                     date: displayDate,
                 },
             };
         }
 
-        // Determine status based on current time
-        const currentHour = today.getHours();
-        const currentMinute = today.getMinutes();
-        const currentTime = currentHour * 60 + currentMinute;
+        const actionType = status.action_type as "check_in" | "check_out";
+        const { data: saveData, error: saveError } = await supabase.rpc("save_attendance_record", {
+            p_user_id: userProfile.userId,
+            p_action_type: actionType,
+            p_photo_path: null,
+            p_latitude: -7.449980,
+            p_longitude: 110.223600,
+        });
 
-        // Define time boundaries (can be adjusted)
-        const masukStart = 6 * 60; // 06:00
-        const masukEnd = 7 * 60; // 07:00 (on time)
-        const terlambatEnd = 8 * 60; // 08:00 (late cutoff)
-        const pulangStart = 14 * 60; // 14:00
-
-        let status: "Hadir" | "Terlambat" | "Pulang" | "Alpha";
-
-        if (currentTime >= masukStart && currentTime <= masukEnd) {
-            status = "Hadir";
-        } else if (currentTime > masukEnd && currentTime <= terlambatEnd) {
-            status = "Terlambat";
-        } else if (currentTime >= pulangStart) {
-            status = "Pulang";
-        } else {
-            status = "Hadir"; // Default to Hadir for other times
+        if (saveError) {
+            console.error("RPC Error:", saveError);
+            return { success: false, message: "Gagal menyimpan absensi" };
         }
 
-        // Create absence record
-        await db.insert(absences).values({
-            userId: userProfile.userId,
-            date: dateStr,
-            status: status,
-            reason: null,
-            photoUrl: null,
-            latitude: null,
-            longitude: null,
-        });
+        const saveResult = saveData as { success: boolean; message: string };
+
+        if (!saveResult.success) {
+            return { success: false, message: saveResult.message };
+        }
+
+        const finalStatus = actionType === "check_in"
+            ? (status.details?.status ?? "Hadir")
+            : "Pulang";
 
         return {
             success: true,
-            message: "Absensi berhasil dicatat!",
+            message: saveResult.message,
             data: {
                 userName: userProfile.fullName ?? "Unknown",
                 nis: userProfile.nis ?? nis,
                 className: userProfile.className ?? "-",
-                status: status,
+                status: finalStatus,
                 date: displayDate,
             },
         };
     } catch (error) {
         console.error("Error creating absence:", error);
-        return {
-            success: false,
-            message: "Terjadi kesalahan saat memproses absensi",
-        };
+        return { success: false, message: "Terjadi kesalahan saat memproses absensi" };
     }
 }

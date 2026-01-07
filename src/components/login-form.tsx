@@ -47,7 +47,7 @@ export function LoginForm({
       return
     }
 
-    router.push("/index")
+    router.push("/presensi")
     router.refresh()
   }
 
