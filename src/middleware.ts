@@ -36,7 +36,7 @@ export async function middleware(request: NextRequest) {
     // Protected routes - redirect to login if not authenticated
     if (
         !user &&
-        (request.nextUrl.pathname.startsWith("/index") ||
+        (request.nextUrl.pathname.startsWith("/presensi") ||
             request.nextUrl.pathname.match(/^\/\(main\)/))
     ) {
         const url = request.nextUrl.clone();
@@ -47,7 +47,7 @@ export async function middleware(request: NextRequest) {
     // Redirect to index if already logged in and trying to access login
     if (user && request.nextUrl.pathname === "/login") {
         const url = request.nextUrl.clone();
-        url.pathname = "/index";
+        url.pathname = "/presensi";
         return NextResponse.redirect(url);
     }
 
