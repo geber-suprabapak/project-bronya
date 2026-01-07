@@ -10,9 +10,16 @@
     "format": "biome format --write"
   },
   "dependencies": {
+    "@supabase/ssr": "^0.8.0",
+    "@supabase/supabase-js": "^2.89.0",
+    "@t3-oss/env-nextjs": "^0.13.10",
+    "drizzle-orm": "^0.45.1",
     "next": "16.1.1",
+    "postgres": "^3.4.7",
     "react": "19.2.3",
-    "react-dom": "19.2.3"
+    "react-dom": "19.2.3",
+    "server-only": "^0.0.1",
+    "zod": "^4.3.5"
   },
   "devDependencies": {
     "@biomejs/biome": "2.2.0",
@@ -20,6 +27,7 @@
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "drizzle-kit": "^0.31.8",
     "tailwindcss": "^4",
     "typescript": "^5"
   }
