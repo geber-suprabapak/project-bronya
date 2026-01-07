@@ -51,13 +51,81 @@ const findUserByNis = async (nis: string) => {
     return result[0];
 };
 
+type ScheduleTimeWindow = "check_in" | "late" | "check_out" | "outside" | "no_schedule";
+
+type ScheduleStatus = {
+    success: boolean;
+    timeWindow: ScheduleTimeWindow;
+    message: string;
+    schedule?: {
+        hari: string;
+        mulaiMasuk: string;
+        selesaiMasuk: string;
+        mulaiPulang: string;
+        selesaiPulang: string;
+        kompensasiWaktu: number;
+    };
+};
+
+const DAYS_ID = ["minggu", "senin", "selasa", "rabu", "kamis", "jumat", "sabtu"];
+
+const toMinutes = (t: string) => {
+    const [h, m] = t.split(":").map(Number);
+    return (h ?? 0) * 60 + (m ?? 0);
+};
+
+export async function checkScheduleStatus(): Promise<ScheduleStatus> {
+    try {
+        const supabase = await createClient();
+        const now = new Date();
+        const wib = new Date(now.toLocaleString("en-US", { timeZone: "Asia/Jakarta" }));
+        const day = DAYS_ID[wib.getDay()]!;
+        const mins = wib.getHours() * 60 + wib.getMinutes();
+
+        const { data } = await supabase
+            .from("jadwal_absensi")
+            .select("*")
+            .eq("hari", day)
+            .eq("is_active", true)
+            .single();
+
+        if (!data) return { success: true, timeWindow: "no_schedule", message: "Tidak ada jadwal hari ini" };
+
+        const s = {
+            hari: data.hari,
+            mulaiMasuk: data.mulai_masuk,
+            selesaiMasuk: data.selesai_masuk,
+            mulaiPulang: data.mulai_pulang,
+            selesaiPulang: data.selesai_pulang,
+            kompensasiWaktu: data.kompensasi_waktu,
+        };
+
+        const masukStart = toMinutes(s.mulaiMasuk);
+        const masukEnd = toMinutes(s.selesaiMasuk);
+        const masukLate = masukEnd + s.kompensasiWaktu;
+        const pulangStart = toMinutes(s.mulaiPulang);
+        const pulangEnd = toMinutes(s.selesaiPulang);
+
+        const [tw, msg]: [ScheduleTimeWindow, string] =
+            mins >= masukStart && mins <= masukEnd ? ["check_in", "Waktu presensi masuk"] :
+                mins > masukEnd && mins <= masukLate ? ["late", "Terlambat (masa kompensasi)"] :
+                    mins >= pulangStart && mins <= pulangEnd ? ["check_out", "Waktu presensi pulang"] :
+                        ["outside", "Di luar jadwal presensi"];
+
+        return { success: true, timeWindow: tw, message: msg, schedule: s };
+    } catch {
+        return { success: false, timeWindow: "outside", message: "Gagal mengecek jadwal" };
+    }
+}
+
 export async function checkAttendanceStatus(
     nis: string,
     latitude: number,
     longitude: number
 ): Promise<AbsenceResult> {
     try {
-        const userProfile = await findUserByNis(nis);
+        const cleanNis = sanitizeNis(nis);
+        const userProfile = await findUserByNis(cleanNis);
 
         if (!userProfile) {
             return { success: false, message: `NIS "${nis}" tidak ditemukan dalam sistem` };
@@ -90,7 +158,7 @@ export async function checkAttendanceStatus(
             message: result.message,
             data: {
                 userName: userProfile.fullName ?? "Unknown",
-                nis: userProfile.nis ?? nis,
+                nis: userProfile.nis ?? cleanNis,
                 className: userProfile.className ?? "-",
                 status: statusLabel,
                 date: displayDate,
@@ -112,10 +180,11 @@ export async function saveAttendance(
     photoPath?: string
 ): Promise<AbsenceResult> {
     try {
-        const userProfile = await findUserByNis(nis);
+        const cleanNis = sanitizeNis(nis);
+        const userProfile = await findUserByNis(cleanNis);
 
         if (!userProfile) {
-            return { success: false, message: `NIS "${nis}" tidak ditemukan dalam sistem` };
+            return { success: false, message: `NIS "${cleanNis}" tidak ditemukan dalam sistem` };
         }
 
         const supabase = await createClient();
@@ -146,7 +215,7 @@ export async function saveAttendance(
             message: result.message,
             data: {
                 userName: userProfile.fullName ?? "Unknown",
-                nis: userProfile.nis ?? nis,
+                nis: userProfile.nis ?? cleanNis,
                 className: userProfile.className ?? "-",
                 status: statusLabel,
                 date: displayDate,
@@ -160,12 +229,21 @@ export async function saveAttendance(
     }
 }
 
+const sanitizeNis = (input: string) => {
+    // Remove common barcode AIM identifiers (e.g., ]C1 for Code 128)
+    let clean = input.replace(/^\][A-Za-z]\d/, "");
+    // Remove all non-numeric characters
+    return clean.replace(/\D/g, "");
+};
+
 export async function checkNisAndCreateAbsence(nis: string): Promise<Omit<AbsenceResult, 'data'> & { data?: Omit<AbsenceData, 'actionType' | 'actionable'> }> {
     try {
-        const userProfile = await findUserByNis(nis);
+        const cleanNis = sanitizeNis(nis);
+        const userProfile = await findUserByNis(cleanNis);
+
 
         if (!userProfile) {
-            return { success: false, message: `NIS "${nis}" tidak ditemukan dalam sistem` };
+            return { success: false, message: `NIS "${cleanNis}" tidak ditemukan dalam sistem` };
         }
 
         const supabase = await createClient();
@@ -185,14 +263,19 @@ export async function checkNisAndCreateAbsence(nis: string): Promise<Omit<Absenc
         const displayDate = formatDisplayDate(new Date());
 
         if (!status.actionable) {
-            const statusLabel = status.action_type === "none" ? "Selesai" : status.details?.status ?? "Hadir";
+            const isCompleted = status.message.includes("menyelesaikan absensi");
+            const statusLabel = isCompleted
+                ? "Selesai"
+                : status.action_type === "check_out"
+                    ? "Menunggu Pulang"
+                    : "Belum Absen";
             return {
                 success: false,
-                alreadyPresent: true,
+                alreadyPresent: isCompleted,
                 message: status.message,
                 data: {
                     userName: userProfile.fullName ?? "Unknown",
-                    nis: userProfile.nis ?? nis,
+                    nis: userProfile.nis ?? cleanNis,
                     className: userProfile.className ?? "-",
                     status: statusLabel,
                     date: displayDate,
@@ -229,7 +312,7 @@ export async function checkNisAndCreateAbsence(nis: string): Promise<Omit<Absenc
             message: saveResult.message,
             data: {
                 userName: userProfile.fullName ?? "Unknown",
-                nis: userProfile.nis ?? nis,
+                nis: userProfile.nis ?? cleanNis,
                 className: userProfile.className ?? "-",
                 status: finalStatus,
                 date: displayDate,
