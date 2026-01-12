@@ -397,7 +397,7 @@ export default function IndexPage() {
         </CardContent>
 
         <CardFooter className="border-t py-4 text-center text-xs text-muted-foreground flex-shrink-0">
-          <div className="w-full">© 2026 Edusoft Development | Lunara Labs</div>
+          <div className="w-full">© {new Date().getFullYear()} Edusoft Development | Lunara Labs</div>
         </CardFooter>
       </Card>
     </div>
