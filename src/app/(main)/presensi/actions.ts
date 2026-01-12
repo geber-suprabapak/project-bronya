@@ -297,10 +297,9 @@ type KioskAbsenceResult = Omit<AbsenceResult, "data"> & {
     data?: Omit<AbsenceData, "actionType" | "actionable">;
 };
 
-const stripActionFields = (
-    data?: AbsenceData,
-): Omit<AbsenceData, "actionType" | "actionable"> | undefined => {
-    if (!data) return undefined;
+type StrippedAbsenceData = Omit<AbsenceData, "actionType" | "actionable">;
+
+const stripActionFields = (data: AbsenceData): StrippedAbsenceData => {
     const { actionType: _, actionable: __, ...rest } = data;
     return rest;
 };
@@ -318,7 +317,7 @@ export async function checkNisAndCreateAbsence(
         if (!statusResult.success) {
             return {
                 ...statusResult,
-                data: stripActionFields(statusResult.data),
+                data: statusResult.data ? stripActionFields(statusResult.data) : undefined,
             };
         }
 
@@ -351,7 +350,7 @@ export async function checkNisAndCreateAbsence(
 
         return {
             ...saveResult,
-            data: stripActionFields(saveResult.data),
+            data: saveResult.data ? stripActionFields(saveResult.data) : undefined,
         };
     } catch (error) {
         console.error("Error creating absence:", error);
