@@ -159,6 +159,21 @@ export default function IndexPage() {
     }
   };
 
+  // Global Tab key handler for mode switching
+  useEffect(() => {
+    const handleGlobalKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Tab") {
+        e.preventDefault(); // Prevent default focus navigation
+        setActiveTab((prev) => (prev === "scan" ? "manual" : "scan"));
+        setNis(""); // Clear input when switching
+        setResult(null); // Clear result when switching
+      }
+    };
+
+    window.addEventListener("keydown", handleGlobalKeyDown);
+    return () => window.removeEventListener("keydown", handleGlobalKeyDown);
+  }, []);
+
   const handleTabChange = (value: string) => {
     setActiveTab(value);
     setNis("");
@@ -207,6 +222,16 @@ export default function IndexPage() {
                   Manual NIS
                 </TabsTrigger>
               </TabsList>
+
+              <div className="flex justify-center mt-2">
+                <p className="text-xs text-muted-foreground flex items-center gap-1">
+                  Tekan{" "}
+                  <kbd className="pointer-events-none inline-flex h-5 select-none items-center gap-1 rounded border bg-muted px-1.5 font-mono text-[10px] font-medium text-muted-foreground opacity-100">
+                    <span className="text-xs">↹</span> Tab
+                  </kbd>{" "}
+                  untuk ganti mode
+                </p>
+              </div>
 
               <TabsContent
                 value="scan"
@@ -300,13 +325,12 @@ export default function IndexPage() {
             /* Result Card - Replaces the input area */
             <div className="animate-in fade-in-50 zoom-in-95 duration-500">
               <Card
-                className={`border-2 shadow-lg ${
-                  result.alreadyPresent
-                    ? "border-amber-400/60 bg-amber-50/50 dark:bg-amber-900/10"
-                    : result.success
-                      ? "border-green-500/60 bg-green-50/50 dark:bg-green-900/10"
-                      : "border-destructive/60 bg-destructive/5"
-                }`}
+                className={`border-2 shadow-lg ${result.alreadyPresent
+                  ? "border-amber-400/60 bg-amber-50/50 dark:bg-amber-900/10"
+                  : result.success
+                    ? "border-green-500/60 bg-green-50/50 dark:bg-green-900/10"
+                    : "border-destructive/60 bg-destructive/5"
+                  }`}
               >
                 <CardHeader className="pb-4">
                   <div className="flex items-center gap-3">
@@ -324,13 +348,12 @@ export default function IndexPage() {
                       </div>
                     )}
                     <CardTitle
-                      className={`text-xl font-bold ${
-                        result.alreadyPresent
-                          ? "text-amber-900 dark:text-amber-100"
-                          : result.success
-                            ? "text-green-900 dark:text-green-100"
-                            : "text-destructive"
-                      }`}
+                      className={`text-xl font-bold ${result.alreadyPresent
+                        ? "text-amber-900 dark:text-amber-100"
+                        : result.success
+                          ? "text-green-900 dark:text-green-100"
+                          : "text-destructive"
+                        }`}
                     >
                       {result.message}
                     </CardTitle>
