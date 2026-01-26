@@ -92,7 +92,7 @@ export default function IndexPage() {
         // But generally good to be ready for next input.
         if (!isScanMode && manualInputRef.current)
           manualInputRef.current.focus();
-      }, 3000);
+      }, 500);
       return () => clearTimeout(timer);
     }
   }, [result, isScanMode]);
@@ -138,7 +138,7 @@ export default function IndexPage() {
       if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
       debounceTimerRef.current = setTimeout(() => {
         processAbsence(value);
-      }, 200);
+      }, 50);
     }
   };
 
