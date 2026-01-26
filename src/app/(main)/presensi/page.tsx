@@ -47,12 +47,17 @@ type AbsenceResult = {
   };
 };
 
+type LogEntry = {
+  result: AbsenceResult;
+  timestamp: number;
+};
+
 export default function IndexPage() {
   const [nis, setNis] = useState("");
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<AbsenceResult | null>(null);
   const [activeTab, setActiveTab] = useState("scan");
-  const [recentLogs, setRecentLogs] = useState<AbsenceResult[]>([]);
+  const [recentLogs, setRecentLogs] = useState<LogEntry[]>([]);
 
   // Refs for inputs
   const scanInputRef = useRef<HTMLInputElement>(null);
@@ -60,6 +65,17 @@ export default function IndexPage() {
   const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   const isScanMode = activeTab === "scan";
+
+  // Reusable function to focus the correct input based on mode
+  const focusInputForMode = useCallback((mode: string) => {
+    setTimeout(() => {
+      if (mode === "manual" && manualInputRef.current) {
+        manualInputRef.current.focus();
+      } else if (mode === "scan" && scanInputRef.current) {
+        scanInputRef.current.focus();
+      }
+    }, 50);
+  }, []);
 
   // Auto-focus logic - input stays focused even when popup is shown
   useEffect(() => {
@@ -119,7 +135,11 @@ export default function IndexPage() {
 
         // Add to recent logs if successful or already present (has meaningful data)
         if ((response.success || response.alreadyPresent) && response.data) {
-          setRecentLogs((prev) => [response, ...prev].slice(0, 5));
+          const logEntry: LogEntry = {
+            result: response,
+            timestamp: Date.now(),
+          };
+          setRecentLogs((prev) => [logEntry, ...prev].slice(0, 5));
         }
       } catch (_error) {
         setResult({
@@ -172,35 +192,19 @@ export default function IndexPage() {
         setActiveTab(newMode);
         setNis(""); // Clear input when switching
         setResult(null); // Clear result when switching
-
-        // Explicitly focus the input after tab change
-        setTimeout(() => {
-          if (newMode === "manual" && manualInputRef.current) {
-            manualInputRef.current.focus();
-          } else if (newMode === "scan" && scanInputRef.current) {
-            scanInputRef.current.focus();
-          }
-        }, 50);
+        focusInputForMode(newMode);
       }
     };
 
     window.addEventListener("keydown", handleGlobalKeyDown);
     return () => window.removeEventListener("keydown", handleGlobalKeyDown);
-  }, [activeTab]);
+  }, [activeTab, focusInputForMode]);
 
   const handleTabChange = (value: string) => {
     setActiveTab(value);
     setNis("");
     setResult(null);
-
-    // Explicitly focus the input after tab change
-    setTimeout(() => {
-      if (value === "manual" && manualInputRef.current) {
-        manualInputRef.current.focus();
-      } else if (value === "scan" && scanInputRef.current) {
-        scanInputRef.current.focus();
-      }
-    }, 50);
+    focusInputForMode(value);
   };
 
   return (
@@ -458,36 +462,36 @@ export default function IndexPage() {
             <ScrollArea className="h-full">
               {recentLogs.length > 0 ? (
                 <div className="divide-y">
-                  {recentLogs.map((log, index) => (
+                  {recentLogs.map((logEntry, index) => (
                     <div
-                      key={`${log.data?.nis}-${index}`}
+                      key={logEntry.timestamp}
                       className={`grid gap-1.5 px-6 py-4 transition-colors hover:bg-muted/50 ${index === 0 ? "bg-muted/30" : ""
                         }`}
                     >
                       <div className="flex items-center justify-between gap-2">
                         <span className="font-medium text-sm truncate">
-                          {log.data?.userName}
+                          {logEntry.result.data?.userName}
                         </span>
                         <span className="text-xs font-mono text-muted-foreground shrink-0">
-                          {new Date().toLocaleTimeString("id-ID", {
+                          {new Date(logEntry.timestamp).toLocaleTimeString("id-ID", {
                             hour: "2-digit",
                             minute: "2-digit",
                           })}
                         </span>
                       </div>
                       <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
-                        <span className="truncate">{log.data?.className}</span>
+                        <span className="truncate">{logEntry.result.data?.className}</span>
                         <div className="flex items-center gap-2 shrink-0">
-                          <span className="font-mono">{log.data?.nis}</span>
+                          <span className="font-mono">{logEntry.result.data?.nis}</span>
                           <Badge
-                            variant={log.success ? "default" : "secondary"}
+                            variant={logEntry.result.success ? "default" : "secondary"}
                             className={
-                              log.success
+                              logEntry.result.success
                                 ? "bg-green-500/15 text-green-700 hover:bg-green-500/20 dark:text-green-400"
                                 : "bg-amber-500/15 text-amber-700 hover:bg-amber-500/20 dark:text-amber-400"
                             }
                           >
-                            {log.data?.status}
+                            {logEntry.result.data?.status}
                           </Badge>
                         </div>
                       </div>
