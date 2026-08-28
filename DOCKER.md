@@ -10,9 +10,10 @@ docker build -t project-bronya .
 ### Run Container
 ```bash
 docker run -p 3000:3000 \
-  -e DATABASE_URL="your_database_url" \
-  -e NEXT_PUBLIC_SUPABASE_URL="your_supabase_url" \
-  -e NEXT_PUBLIC_SUPABASE_ANON_KEY="your_supabase_key" \
+  -e ASTRA_API_URL="http://astra:3000" \
+  -e ASTRA_DEVICE_TOKEN="your_device_token" \
+  -e KIOSK_LATITUDE="-7.44998" \
+  -e KIOSK_LONGITUDE="110.2236" \
   project-bronya
 ```
 
@@ -67,9 +68,15 @@ This will create images with tags:
 ## 🔧 Environment Variables
 
 Required environment variables:
-- `DATABASE_URL` - PostgreSQL connection string
-- `NEXT_PUBLIC_SUPABASE_URL` - Supabase project URL
-- `NEXT_PUBLIC_SUPABASE_ANON_KEY` - Supabase anonymous key
+- `ASTRA_API_URL` - Central Domain BFF API URL (default: `http://localhost:3000`)
+- `ASTRA_DEVICE_TOKEN` - Device Identity service bearer token for Astra BFF
+- `KIOSK_LATITUDE` - Terminal latitude coordinate (default: `-7.44998`)
+- `KIOSK_LONGITUDE` - Terminal longitude coordinate (default: `110.2236`)
+
+Optional environment variables:
+- `DATABASE_URL` - Direct PostgreSQL connection string (for local DB mode)
+- `PORT` - Port number (default: `3000`)
+- `NODE_ENV` - `development` or `production`
 
 ## 📝 Notes
 

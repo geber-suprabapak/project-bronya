@@ -32,6 +32,13 @@ export function LoginForm({
     setLoading(true);
     setError(null);
 
+    if (!supabase) {
+      // In standalone / Astra BFF Kiosk mode, navigate directly to presensi terminal
+      router.push("/presensi");
+      router.refresh();
+      return;
+    }
+
     const { error } = await supabase.auth.signInWithPassword({
       email,
       password,

@@ -12,7 +12,9 @@ const globalForDb = globalThis as unknown as {
   conn: postgres.Sql | undefined;
 };
 
-const conn = globalForDb.conn ?? postgres(env.DATABASE_URL);
+const databaseUrl =
+  env.DATABASE_URL || "postgresql://skanida:postgres@localhost:5432/skanida";
+const conn = globalForDb.conn ?? postgres(databaseUrl, { max: 5 });
 if (env.NODE_ENV !== "production") globalForDb.conn = conn;
 
 export const db = drizzle(conn, { schema });
