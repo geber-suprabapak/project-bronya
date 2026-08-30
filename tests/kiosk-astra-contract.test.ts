@@ -9,6 +9,7 @@ test("kiosk attendance does not claim success when Astra rejects the record", as
   );
 
   assert.match(source, /getAccessTokenRSC/);
+  assert.match(source, /"X-Astra-Contract-Version": "v1"/);
   assert.doesNotMatch(source, /ASTRA_DEVICE_TOKEN/);
   assert.match(source, /Gagal mencatat presensi ke Astra/);
 });

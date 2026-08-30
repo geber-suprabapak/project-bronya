@@ -174,6 +174,7 @@ const astraHeaders = async (): Promise<Record<string, string>> => {
   return {
     Authorization: `Bearer ${accessToken}`,
     "Content-Type": "application/json",
+    "X-Astra-Contract-Version": "v1",
   };
 };
 
