@@ -29,8 +29,8 @@ import {
 import { Input } from "@/components/ui/input";
 import { Kbd } from "@/components/ui/kbd";
 import { Label } from "@/components/ui/label";
-import { Separator } from "@/components/ui/separator";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Separator } from "@/components/ui/separator";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { checkNisAndCreateAbsence } from "./actions";
 
@@ -338,7 +338,11 @@ export default function IndexPage() {
 
               <div className="flex justify-center mt-2">
                 <p className="text-xs text-muted-foreground flex items-center gap-1">
-                  Tekan <Kbd><span className="text-xs">↹</span> Tab</Kbd> untuk ganti mode
+                  Tekan{" "}
+                  <Kbd>
+                    <span className="text-xs">↹</span> Tab
+                  </Kbd>{" "}
+                  untuk ganti mode
                 </p>
               </div>
 
@@ -353,7 +357,9 @@ export default function IndexPage() {
                       <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-green-500" />
                     </div>
                     <div className="grid gap-0.5">
-                      <p className="text-sm font-medium leading-none">Scanner siap</p>
+                      <p className="text-sm font-medium leading-none">
+                        Scanner siap
+                      </p>
                       <p className="text-sm text-muted-foreground">
                         Gunakan scanner dan arahkan ke barcode di kartu pelajar.
                       </p>
@@ -408,8 +414,8 @@ export default function IndexPage() {
                         autoComplete="off"
                       />
                       <p className="text-sm text-muted-foreground">
-                        Masukkan NIS siswa sesuai dengan data yang terdaftar
-                        di sistem.
+                        Masukkan NIS siswa sesuai dengan data yang terdaftar di
+                        sistem.
                       </p>
                     </div>
                     <Button
@@ -465,26 +471,36 @@ export default function IndexPage() {
                   {recentLogs.map((logEntry, index) => (
                     <div
                       key={logEntry.timestamp}
-                      className={`grid gap-1.5 px-6 py-4 transition-colors hover:bg-muted/50 ${index === 0 ? "bg-muted/30" : ""
-                        }`}
+                      className={`grid gap-1.5 px-6 py-4 transition-colors hover:bg-muted/50 ${
+                        index === 0 ? "bg-muted/30" : ""
+                      }`}
                     >
                       <div className="flex items-center justify-between gap-2">
                         <span className="font-medium text-sm truncate">
                           {logEntry.result.data?.userName}
                         </span>
                         <span className="text-xs font-mono text-muted-foreground shrink-0">
-                          {new Date(logEntry.timestamp).toLocaleTimeString("id-ID", {
-                            hour: "2-digit",
-                            minute: "2-digit",
-                          })}
+                          {new Date(logEntry.timestamp).toLocaleTimeString(
+                            "id-ID",
+                            {
+                              hour: "2-digit",
+                              minute: "2-digit",
+                            },
+                          )}
                         </span>
                       </div>
                       <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
-                        <span className="truncate">{logEntry.result.data?.className}</span>
+                        <span className="truncate">
+                          {logEntry.result.data?.className}
+                        </span>
                         <div className="flex items-center gap-2 shrink-0">
-                          <span className="font-mono">{logEntry.result.data?.nis}</span>
+                          <span className="font-mono">
+                            {logEntry.result.data?.nis}
+                          </span>
                           <Badge
-                            variant={logEntry.result.success ? "default" : "secondary"}
+                            variant={
+                              logEntry.result.success ? "default" : "secondary"
+                            }
                             className={
                               logEntry.result.success
                                 ? "bg-green-500/15 text-green-700 hover:bg-green-500/20 dark:text-green-400"

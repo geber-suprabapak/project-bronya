@@ -2,6 +2,7 @@
   "name": "project-bronya",
   "version": "0.1.0",
   "private": true,
+  "type": "module",
   "scripts": {
     "dev": "next dev",
     "build": "next build",
@@ -10,13 +11,12 @@
     "format": "biome format --write"
   },
   "dependencies": {
+    "@logto/next": "^4.2.10",
     "@radix-ui/react-label": "^2.1.8",
     "@radix-ui/react-scroll-area": "^1.2.10",
     "@radix-ui/react-separator": "^1.1.8",
     "@radix-ui/react-slot": "^1.2.4",
     "@radix-ui/react-tabs": "^1.1.13",
-    "@supabase/ssr": "^0.8.0",
-    "@supabase/supabase-js": "^2.89.0",
     "@t3-oss/env-nextjs": "^0.13.10",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",

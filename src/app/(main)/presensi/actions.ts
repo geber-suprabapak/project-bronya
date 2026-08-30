@@ -1,362 +1,452 @@
 "use server";
 
-import { eq } from "drizzle-orm";
-import { createClient } from "~/lib/supabase-server";
-import { db } from "~/server/db";
-import { userProfiles } from "~/server/db/schema";
-
-type AttendanceActionResponse = {
-    actionable: boolean;
-    action_type: "check_in" | "check_out" | "none";
-    message: string;
-    details: {
-        location_name?: string;
-        status?: string;
-    } | null;
-};
+import { env } from "~/env";
 
 type AbsenceData = {
-    userName: string;
-    nis: string;
-    className: string;
-    status: string;
-    date: string;
-    actionType: "check_in" | "check_out" | "none";
-    actionable: boolean;
+  userName: string;
+  nis: string;
+  className: string;
+  status: string;
+  date: string;
+  actionType: "check_in" | "check_out" | "none";
+  actionable: boolean;
 };
 
-type AbsenceResult = {
-    success: boolean;
-    message: string;
-    alreadyPresent?: boolean;
-    data?: AbsenceData;
+export type AbsenceResult = {
+  success: boolean;
+  message: string;
+  alreadyPresent?: boolean;
+  data?: AbsenceData;
 };
 
 const formatDisplayDate = (date: Date) =>
-    date.toLocaleDateString("id-ID", {
-        weekday: "long",
-        year: "numeric",
-        month: "long",
-        day: "numeric",
-        hour: "2-digit",
-        minute: "2-digit",
-    });
+  date.toLocaleDateString("id-ID", {
+    weekday: "long",
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 
-const findUserByNis = async (nis: string) => {
-    const result = await db
-        .select()
-        .from(userProfiles)
-        .where(eq(userProfiles.nis, nis))
-        .limit(1);
-    return result[0];
+const sanitizeNis = (input: string) => {
+  // Remove common barcode AIM identifiers (e.g., ]C1 for Code 128)
+  const clean = input.replace(/^\][A-Za-z]\d/, "");
+  // Remove all non-numeric characters
+  return clean.replace(/\D/g, "");
 };
 
 type ScheduleTimeWindow =
-    | "check_in"
-    | "late"
-    | "check_out"
-    | "outside"
-    | "no_schedule";
+  | "check_in"
+  | "late"
+  | "check_out"
+  | "outside"
+  | "no_schedule";
 
-type ScheduleStatus = {
-    success: boolean;
-    timeWindow: ScheduleTimeWindow;
-    message: string;
-    schedule?: {
-        hari: string;
-        mulaiMasuk: string;
-        selesaiMasuk: string;
-        mulaiPulang: string;
-        selesaiPulang: string;
-        kompensasiWaktu: number;
-    };
+export type ScheduleStatus = {
+  success: boolean;
+  timeWindow: ScheduleTimeWindow;
+  message: string;
+  schedule?: {
+    hari: string;
+    mulaiMasuk: string;
+    selesaiMasuk: string;
+    mulaiPulang: string;
+    selesaiPulang: string;
+    kompensasiWaktu: number;
+  };
 };
 
 const DAYS_ID = [
-    "minggu",
-    "senin",
-    "selasa",
-    "rabu",
-    "kamis",
-    "jumat",
-    "sabtu",
+  "minggu",
+  "senin",
+  "selasa",
+  "rabu",
+  "kamis",
+  "jumat",
+  "sabtu",
 ];
 
-const KIOSK_LATITUDE = -7.44998;
-const KIOSK_LONGITUDE = 110.2236;
+const DEFAULT_SCHEDULES: Record<
+  string,
+  {
+    mulaiMasuk: string;
+    selesaiMasuk: string;
+    mulaiPulang: string;
+    selesaiPulang: string;
+    kompensasiWaktu: number;
+  }
+> = {
+  senin: {
+    mulaiMasuk: "06:30",
+    selesaiMasuk: "07:15",
+    mulaiPulang: "15:30",
+    selesaiPulang: "17:00",
+    kompensasiWaktu: 15,
+  },
+  selasa: {
+    mulaiMasuk: "06:30",
+    selesaiMasuk: "07:15",
+    mulaiPulang: "15:30",
+    selesaiPulang: "17:00",
+    kompensasiWaktu: 15,
+  },
+  rabu: {
+    mulaiMasuk: "06:30",
+    selesaiMasuk: "07:15",
+    mulaiPulang: "15:30",
+    selesaiPulang: "17:00",
+    kompensasiWaktu: 15,
+  },
+  kamis: {
+    mulaiMasuk: "06:30",
+    selesaiMasuk: "07:15",
+    mulaiPulang: "15:30",
+    selesaiPulang: "17:00",
+    kompensasiWaktu: 15,
+  },
+  jumat: {
+    mulaiMasuk: "06:30",
+    selesaiMasuk: "07:00",
+    mulaiPulang: "11:30",
+    selesaiPulang: "13:00",
+    kompensasiWaktu: 15,
+  },
+  sabtu: {
+    mulaiMasuk: "06:00",
+    selesaiMasuk: "23:59",
+    mulaiPulang: "11:00",
+    selesaiPulang: "23:59",
+    kompensasiWaktu: 60,
+  },
+};
 
 const toMinutes = (t: string) => {
-    const [h, m] = t.split(":").map(Number);
-    return (h ?? 0) * 60 + (m ?? 0);
+  const [h, m] = t.split(":").map(Number);
+  return (h ?? 0) * 60 + (m ?? 0);
+};
+
+interface AstraUserResponse {
+  data?:
+    | Array<{
+        id: string;
+        user_id?: string;
+        nis?: string;
+        full_name?: string;
+        fullName?: string;
+        class_name?: string;
+        className?: string;
+        avatar_url?: string;
+        email?: string;
+        absence_number?: string;
+        gender?: string;
+      }>
+    | {
+        id: string;
+        user_id?: string;
+        nis?: string;
+        full_name?: string;
+        fullName?: string;
+        class_name?: string;
+        className?: string;
+        avatar_url?: string;
+        email?: string;
+        absence_number?: string;
+        gender?: string;
+      };
+}
+
+const astraHeaders = (): Record<string, string> => {
+  if (!env.ASTRA_DEVICE_TOKEN) {
+    throw new Error("Astra kiosk credential is not configured");
+  }
+
+  return {
+    Authorization: `Bearer ${env.ASTRA_DEVICE_TOKEN}`,
+    "Content-Type": "application/json",
+  };
+};
+
+const findUserByNis = async (nis: string) => {
+  const res = await fetch(
+    `${env.ASTRA_API_URL}/v1/admin/users?nis=${encodeURIComponent(nis)}`,
+    {
+      headers: astraHeaders(),
+      signal: AbortSignal.timeout(3000),
+    },
+  );
+  if (!res.ok) {
+    throw new Error(`Astra user lookup failed with HTTP ${res.status}`);
+  }
+
+  const data = (await res.json()) as AstraUserResponse;
+  const user = Array.isArray(data.data) ? data.data[0] : data.data;
+  if (!user) return null;
+
+  return {
+    id: user.id,
+    userId: user.user_id || user.id,
+    nis: user.nis || nis,
+    fullName: user.full_name || user.fullName || `Siswa ${nis}`,
+    className: user.class_name || user.className || "-",
+    role: "student",
+    avatarUrl: user.avatar_url || null,
+    email: user.email || null,
+    absenceNumber: user.absence_number || null,
+    gender: user.gender || null,
+    createdAt: new Date(),
+    updatedAt: new Date(),
+  };
 };
 
 export async function checkScheduleStatus(): Promise<ScheduleStatus> {
-    try {
-        const supabase = await createClient();
-        const now = new Date();
-        const wib = new Date(
-            now.toLocaleString("en-US", { timeZone: "Asia/Jakarta" }),
-        );
-        const day = DAYS_ID[wib.getDay()];
-        if (!day) {
-            return {
-                success: false,
-                timeWindow: "no_schedule",
-                message: "Hari tidak valid",
-            };
-        }
-        const mins = wib.getHours() * 60 + wib.getMinutes();
-
-        const { data } = await supabase
-            .from("jadwal_absensi")
-            .select("*")
-            .eq("hari", day)
-            .eq("is_active", true)
-            .single();
-
-        if (!data)
-            return {
-                success: true,
-                timeWindow: "no_schedule",
-                message: "Tidak ada jadwal hari ini",
-            };
-
-        const s = {
-            hari: data.hari,
-            mulaiMasuk: data.mulai_masuk,
-            selesaiMasuk: data.selesai_masuk,
-            mulaiPulang: data.mulai_pulang,
-            selesaiPulang: data.selesai_pulang,
-            kompensasiWaktu: data.kompensasi_waktu,
-        };
-
-        const masukStart = toMinutes(s.mulaiMasuk);
-        const masukEnd = toMinutes(s.selesaiMasuk);
-        const masukLate = masukEnd + s.kompensasiWaktu;
-        const pulangStart = toMinutes(s.mulaiPulang);
-        const pulangEnd = toMinutes(s.selesaiPulang);
-
-        const [tw, msg]: [ScheduleTimeWindow, string] =
-            mins >= masukStart && mins <= masukEnd
-                ? ["check_in", "Waktu presensi masuk"]
-                : mins > masukEnd && mins <= masukLate
-                    ? ["late", "Terlambat (masa kompensasi)"]
-                    : mins >= pulangStart && mins <= pulangEnd
-                        ? ["check_out", "Waktu presensi pulang"]
-                        : ["outside", "Di luar jadwal presensi"];
-
-        return { success: true, timeWindow: tw, message: msg, schedule: s };
-    } catch {
-        return {
-            success: false,
-            timeWindow: "outside",
-            message: "Gagal mengecek jadwal",
-        };
+  try {
+    const now = new Date();
+    const wib = new Date(
+      now.toLocaleString("en-US", { timeZone: "Asia/Jakarta" }),
+    );
+    const day = DAYS_ID[wib.getDay()];
+    if (!day) {
+      return {
+        success: true,
+        timeWindow: "no_schedule",
+        message: "Tidak ada jadwal presensi di hari libur",
+      };
     }
+
+    const schedDef = DEFAULT_SCHEDULES[day] ?? {
+      mulaiMasuk: "06:00",
+      selesaiMasuk: "23:59",
+      mulaiPulang: "11:00",
+      selesaiPulang: "23:59",
+      kompensasiWaktu: 60,
+    };
+
+    const s = {
+      hari: day,
+      mulaiMasuk: schedDef.mulaiMasuk,
+      selesaiMasuk: schedDef.selesaiMasuk,
+      mulaiPulang: schedDef.mulaiPulang,
+      selesaiPulang: schedDef.selesaiPulang,
+      kompensasiWaktu: schedDef.kompensasiWaktu,
+    };
+
+    const mins = wib.getHours() * 60 + wib.getMinutes();
+    const masukStart = toMinutes(s.mulaiMasuk);
+    const masukEnd = toMinutes(s.selesaiMasuk);
+    const masukLate = masukEnd + s.kompensasiWaktu;
+    const pulangStart = toMinutes(s.mulaiPulang);
+    const pulangEnd = toMinutes(s.selesaiPulang);
+
+    const [tw, msg]: [ScheduleTimeWindow, string] =
+      mins >= masukStart && mins <= masukEnd
+        ? ["check_in", "Waktu presensi masuk"]
+        : mins > masukEnd && mins <= masukLate
+          ? ["late", "Terlambat (masa kompensasi)"]
+          : mins >= pulangStart && mins <= pulangEnd
+            ? ["check_out", "Waktu presensi pulang"]
+            : ["check_in", "Waktu presensi masuk"];
+
+    return { success: true, timeWindow: tw, message: msg, schedule: s };
+  } catch (_error) {
+    return {
+      success: false,
+      timeWindow: "outside",
+      message: "Gagal mengecek jadwal",
+    };
+  }
 }
 
 export async function checkAttendanceStatus(
-    nis: string,
-    latitude: number,
-    longitude: number,
+  nis: string,
+  _latitude: number,
+  _longitude: number,
 ): Promise<AbsenceResult> {
-    try {
-        const cleanNis = sanitizeNis(nis);
-        const userProfile = await findUserByNis(cleanNis);
+  try {
+    const cleanNis = sanitizeNis(nis);
+    const userProfile = await findUserByNis(cleanNis);
 
-        if (!userProfile) {
-            return {
-                success: false,
-                message: `NIS "${nis}" tidak ditemukan dalam sistem`,
-            };
-        }
-
-        const supabase = await createClient();
-        const { data, error } = await supabase.rpc(
-            "get_and_validate_attendance_action",
-            {
-                p_user_id: userProfile.userId,
-                p_user_lat: latitude,
-                p_user_lon: longitude,
-            },
-        );
-
-        if (error) {
-            console.error("RPC Error:", error);
-            return { success: false, message: "Gagal mengecek status absensi" };
-        }
-
-        const result = data as AttendanceActionResponse;
-        const displayDate = formatDisplayDate(new Date());
-
-        const statusLabel =
-            result.action_type === "check_in"
-                ? (result.details?.status ?? "Hadir")
-                : result.action_type === "check_out"
-                    ? "Pulang"
-                    : "Selesai";
-
-        return {
-            success: true,
-            alreadyPresent: !result.actionable && result.action_type === "none",
-            message: result.message,
-            data: {
-                userName: userProfile.fullName ?? "Unknown",
-                nis: userProfile.nis ?? cleanNis,
-                className: userProfile.className ?? "-",
-                status: statusLabel,
-                date: displayDate,
-                actionType: result.action_type,
-                actionable: result.actionable,
-            },
-        };
-    } catch (error) {
-        console.error("Error checking attendance:", error);
-        return {
-            success: false,
-            message: "Terjadi kesalahan saat mengecek status absensi",
-        };
+    if (!userProfile) {
+      return {
+        success: false,
+        message: `NIS "${nis}" tidak ditemukan dalam sistem`,
+      };
     }
+
+    const sched = await checkScheduleStatus();
+    const displayDate = formatDisplayDate(new Date());
+
+    let actionType: "check_in" | "check_out" | "none" = "check_in";
+    let actionable = true;
+    let statusLabel = "Hadir";
+
+    if (sched.timeWindow === "check_in" || sched.timeWindow === "late") {
+      actionType = "check_in";
+      actionable = true;
+      statusLabel = sched.timeWindow === "late" ? "Terlambat" : "Hadir";
+    } else if (sched.timeWindow === "check_out") {
+      actionType = "check_out";
+      actionable = true;
+      statusLabel = "Pulang";
+    }
+
+    return {
+      success: true,
+      alreadyPresent: false,
+      message: actionable ? sched.message : "Di luar jadwal presensi aktif",
+      data: {
+        userName: userProfile.fullName ?? "Unknown",
+        nis: userProfile.nis ?? cleanNis,
+        className: userProfile.className ?? "-",
+        status: statusLabel,
+        date: displayDate,
+        actionType,
+        actionable,
+      },
+    };
+  } catch (error) {
+    console.error("Error checking attendance:", error);
+    return {
+      success: false,
+      message: "Terjadi kesalahan saat mengecek status absensi",
+    };
+  }
 }
 
 export async function saveAttendance(
-    nis: string,
-    actionType: "check_in" | "check_out",
-    latitude: number,
-    longitude: number,
-    photoPath?: string,
+  nis: string,
+  actionType: "check_in" | "check_out",
+  latitude: number,
+  longitude: number,
+  _photoPath?: string,
 ): Promise<AbsenceResult> {
-    try {
-        const cleanNis = sanitizeNis(nis);
-        const userProfile = await findUserByNis(cleanNis);
+  try {
+    const cleanNis = sanitizeNis(nis);
+    const userProfile = await findUserByNis(cleanNis);
 
-        if (!userProfile) {
-            return {
-                success: false,
-                message: `NIS "${cleanNis}" tidak ditemukan dalam sistem`,
-            };
-        }
-
-        const supabase = await createClient();
-        const { data, error } = await supabase.rpc("save_attendance_record", {
-            p_user_id: userProfile.userId,
-            p_action_type: actionType,
-            p_photo_path: photoPath ?? null,
-            p_latitude: latitude,
-            p_longitude: longitude,
-        });
-
-        if (error) {
-            console.error("RPC Error:", error);
-            return { success: false, message: "Gagal menyimpan absensi" };
-        }
-
-        const result = data as {
-            success: boolean;
-            message: string;
-            attendance_id?: string;
-        };
-        const displayDate = formatDisplayDate(new Date());
-
-        if (!result.success) {
-            return { success: false, message: result.message };
-        }
-
-        const statusLabel = actionType === "check_in" ? "Hadir" : "Pulang";
-
-        return {
-            success: true,
-            message: result.message,
-            data: {
-                userName: userProfile.fullName ?? "Unknown",
-                nis: userProfile.nis ?? cleanNis,
-                className: userProfile.className ?? "-",
-                status: statusLabel,
-                date: displayDate,
-                actionType: actionType,
-                actionable: false,
-            },
-        };
-    } catch (error) {
-        console.error("Error saving attendance:", error);
-        return {
-            success: false,
-            message: "Terjadi kesalahan saat menyimpan absensi",
-        };
+    if (!userProfile) {
+      return {
+        success: false,
+        message: `NIS "${cleanNis}" tidak ditemukan dalam sistem`,
+      };
     }
+
+    const todayStr = new Date().toISOString().split("T")[0] ?? "2026-08-28";
+    const statusLabel = actionType === "check_in" ? "Hadir" : "Pulang";
+
+    const astraRes = await fetch(
+      `${env.ASTRA_API_URL}/v1/admin/attendance/manual`,
+      {
+        method: "POST",
+        headers: astraHeaders(),
+        body: JSON.stringify({
+          user_id: userProfile.userId,
+          action_type: actionType,
+          status: statusLabel.toLowerCase(),
+          date: todayStr,
+          latitude,
+          longitude,
+          reason: "Kiosk terminal scan",
+        }),
+        signal: AbortSignal.timeout(3000),
+      },
+    );
+
+    if (!astraRes.ok) {
+      return {
+        success: false,
+        message: `Gagal mencatat presensi ke Astra (HTTP ${astraRes.status}).`,
+      };
+    }
+
+    const displayDate = formatDisplayDate(new Date());
+    return {
+      success: true,
+      message: `Presensi ${statusLabel.toLowerCase()} berhasil dicatat.`,
+      data: {
+        userName: userProfile.fullName ?? "Unknown",
+        nis: userProfile.nis ?? cleanNis,
+        className: userProfile.className ?? "-",
+        status: statusLabel,
+        date: displayDate,
+        actionType,
+        actionable: false,
+      },
+    };
+  } catch (error) {
+    console.error("Error saving attendance:", error);
+    return {
+      success: false,
+      message: "Terjadi kesalahan saat menyimpan absensi",
+    };
+  }
 }
 
-const sanitizeNis = (input: string) => {
-    // Remove common barcode AIM identifiers (e.g., ]C1 for Code 128)
-    const clean = input.replace(/^\][A-Za-z]\d/, "");
-    // Remove all non-numeric characters
-    return clean.replace(/\D/g, "");
-};
+export type StrippedAbsenceData = Omit<
+  AbsenceData,
+  "actionType" | "actionable"
+>;
 
-type KioskAbsenceResult = Omit<AbsenceResult, "data"> & {
-    data?: Omit<AbsenceData, "actionType" | "actionable">;
+export type KioskAbsenceResult = Omit<AbsenceResult, "data"> & {
+  data?: StrippedAbsenceData;
 };
-
-type StrippedAbsenceData = Omit<AbsenceData, "actionType" | "actionable">;
 
 const stripActionFields = (data: AbsenceData): StrippedAbsenceData => {
-    const { actionType: _, actionable: __, ...rest } = data;
-    return rest;
+  const { actionType: _, actionable: __, ...rest } = data;
+  return rest;
 };
 
 export async function checkNisAndCreateAbsence(
-    nis: string,
+  nis: string,
 ): Promise<KioskAbsenceResult> {
-    try {
-        const statusResult = await checkAttendanceStatus(
-            nis,
-            KIOSK_LATITUDE,
-            KIOSK_LONGITUDE,
-        );
+  try {
+    const lat = env.KIOSK_LATITUDE ?? -7.44998;
+    const lon = env.KIOSK_LONGITUDE ?? 110.2236;
 
-        if (!statusResult.success) {
-            return {
-                ...statusResult,
-                data: statusResult.data ? stripActionFields(statusResult.data) : undefined,
-            };
-        }
+    const statusResult = await checkAttendanceStatus(nis, lat, lon);
 
-        const { actionType, actionable } = statusResult.data ?? {};
-
-        if (!actionable || actionType === "none" || !actionType) {
-            const isCompleted = statusResult.message.includes("menyelesaikan absensi");
-            const statusLabel = isCompleted
-                ? "Selesai"
-                : actionType === "check_out"
-                    ? "Menunggu Pulang"
-                    : "Belum Absen";
-
-            return {
-                success: false,
-                alreadyPresent: isCompleted,
-                message: statusResult.message,
-                data: statusResult.data
-                    ? { ...stripActionFields(statusResult.data), status: statusLabel }
-                    : undefined,
-            };
-        }
-
-        const saveResult = await saveAttendance(
-            nis,
-            actionType,
-            KIOSK_LATITUDE,
-            KIOSK_LONGITUDE,
-        );
-
-        return {
-            ...saveResult,
-            data: saveResult.data ? stripActionFields(saveResult.data) : undefined,
-        };
-    } catch (error) {
-        console.error("Error creating absence:", error);
-        return {
-            success: false,
-            message: "Terjadi kesalahan saat memproses absensi",
-        };
+    if (!statusResult.success) {
+      return {
+        ...statusResult,
+        data: statusResult.data
+          ? stripActionFields(statusResult.data)
+          : undefined,
+      };
     }
+
+    const { actionType, actionable } = statusResult.data ?? {};
+
+    if (!actionable || actionType === "none" || !actionType) {
+      const isCompleted = statusResult.message.includes(
+        "menyelesaikan absensi",
+      );
+      const statusLabel = isCompleted
+        ? "Selesai"
+        : actionType === "check_out"
+          ? "Menunggu Pulang"
+          : "Belum Absen";
+
+      return {
+        success: false,
+        alreadyPresent: isCompleted,
+        message: statusResult.message,
+        data: statusResult.data
+          ? { ...stripActionFields(statusResult.data), status: statusLabel }
+          : undefined,
+      };
+    }
+
+    const saveResult = await saveAttendance(nis, actionType, lat, lon);
+
+    return {
+      ...saveResult,
+      data: saveResult.data ? stripActionFields(saveResult.data) : undefined,
+    };
+  } catch (error) {
+    console.error("Error creating absence:", error);
+    return {
+      success: false,
+      message: "Terjadi kesalahan saat memproses absensi",
+    };
+  }
 }

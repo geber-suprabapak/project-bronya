@@ -1,7 +1,5 @@
 "use client";
 
-import { Loader2 } from "lucide-react";
-import { useRouter } from "next/navigation";
 import * as React from "react";
 import { Button } from "@/components/ui/button";
 import {
@@ -11,98 +9,61 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
-import { Input } from "@/components/ui/input";
-import { createClient } from "@/lib/supabase";
 import { cn } from "@/lib/utils";
+
+const ERROR_MESSAGES = {
+  forbidden_role: "Akun ini tidak memiliki role operator Bronya.",
+  unauthorized: "Sesi Logto tidak valid atau telah berakhir.",
+} as const;
 
 export function LoginForm({
   className,
   ...props
 }: React.ComponentProps<"div">) {
-  const router = useRouter();
-  const supabase = createClient();
-  const [email, setEmail] = React.useState("");
-  const [password, setPassword] = React.useState("");
-  const [error, setError] = React.useState<string | null>(null);
   const [loading, setLoading] = React.useState(false);
+  const [error, setError] = React.useState<string | null>(null);
 
-  const handleLogin = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setLoading(true);
-    setError(null);
-
-    const { error } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    });
-
-    if (error) {
-      setError(error.message);
-      setLoading(false);
-      return;
+  React.useEffect(() => {
+    const errorCode = new URLSearchParams(window.location.search).get("error");
+    if (errorCode && errorCode in ERROR_MESSAGES) {
+      setError(ERROR_MESSAGES[errorCode as keyof typeof ERROR_MESSAGES]);
     }
+  }, []);
 
-    router.push("/presensi");
-    router.refresh();
+  const handleLogtoSignIn = () => {
+    setLoading(true);
+    window.location.assign("/api/logto/sign-in");
   };
 
   return (
     <div
-      className={cn("flex flex-col gap-6 w-full max-w-sm mx-auto", className)}
+      className={cn("flex w-full max-w-sm flex-col gap-6", className)}
       {...props}
     >
       <Card>
         <CardHeader className="text-center">
-          <CardTitle className="text-xl">Welcome Back</CardTitle>
-          <CardDescription>Sign in to your account</CardDescription>
+          <CardTitle className="text-xl">Bronya Kiosk</CardTitle>
+          <CardDescription>
+            Masuk dengan akun operator Skanida untuk memakai terminal presensi.
+          </CardDescription>
         </CardHeader>
-        <CardContent>
-          <form onSubmit={handleLogin}>
-            <FieldGroup className="gap-4">
-              <Field>
-                <FieldLabel htmlFor="email">Email</FieldLabel>
-                <Input
-                  id="email"
-                  type="email"
-                  required
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                />
-              </Field>
-              <Field>
-                <div className="flex items-center">
-                  <FieldLabel htmlFor="password">Password</FieldLabel>
-                </div>
-                <Input
-                  id="password"
-                  type="password"
-                  required
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                />
-              </Field>
-
-              {error && (
-                <div className="text-sm text-red-500 font-medium p-2 bg-red-50 rounded border border-red-200">
-                  {error}
-                </div>
-              )}
-
-              <Field>
-                <Button type="submit" className="w-full" disabled={loading}>
-                  {loading ? (
-                    <>
-                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                      Signing in...
-                    </>
-                  ) : (
-                    "Sign In"
-                  )}
-                </Button>
-              </Field>
-            </FieldGroup>
-          </form>
+        <CardContent className="space-y-4">
+          <Button
+            type="button"
+            className="w-full"
+            disabled={loading}
+            onClick={handleLogtoSignIn}
+          >
+            {loading ? "Mengalihkan ke Logto..." : "Masuk dengan Logto"}
+          </Button>
+          {error && (
+            <p
+              className="rounded border border-red-200 bg-red-50 p-2 text-sm font-medium text-red-600"
+              role="alert"
+            >
+              {error}
+            </p>
+          )}
         </CardContent>
       </Card>
     </div>
