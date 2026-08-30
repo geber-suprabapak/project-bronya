@@ -158,6 +158,14 @@ interface AstraUserResponse {
       };
 }
 
+const astraApiUrl = (): string => {
+  if (!env.ASTRA_API_URL) {
+    throw new Error("Astra API URL is not configured");
+  }
+
+  return env.ASTRA_API_URL;
+};
+
 const astraHeaders = async (): Promise<Record<string, string>> => {
   // Astra must receive the access token for the currently authenticated Logto
   // operator. A static device token would outlive or outlast the operator's
@@ -171,7 +179,7 @@ const astraHeaders = async (): Promise<Record<string, string>> => {
 
 const findUserByNis = async (nis: string) => {
   const res = await fetch(
-    `${env.ASTRA_API_URL}/v1/admin/users?nis=${encodeURIComponent(nis)}`,
+    `${astraApiUrl()}/v1/admin/users?nis=${encodeURIComponent(nis)}`,
     {
       headers: await astraHeaders(),
       signal: AbortSignal.timeout(3000),
@@ -337,7 +345,7 @@ export async function saveAttendance(
     const statusLabel = actionType === "check_in" ? "Hadir" : "Pulang";
 
     const astraRes = await fetch(
-      `${env.ASTRA_API_URL}/v1/admin/attendance/manual`,
+      `${astraApiUrl()}/v1/admin/attendance/manual`,
       {
         method: "POST",
         headers: await astraHeaders(),

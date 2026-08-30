@@ -10,4 +10,8 @@ test("missing production config is reported by health instead of crashing edge m
 
   assert.doesNotMatch(source, /Missing required production configuration/);
   assert.doesNotMatch(source, /isNextProductionBuild/);
+  assert.doesNotMatch(
+    source,
+    /ASTRA_API_URL:\s*z\.string\(\)\.url\(\)\.default/,
+  );
 });

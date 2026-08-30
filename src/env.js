@@ -7,7 +7,7 @@ export const env = createEnv({
    */
   server: {
     DATABASE_URL: z.string().optional(),
-    ASTRA_API_URL: z.string().url().default("http://localhost:23000"),
+    ASTRA_API_URL: z.string().url().optional(),
     LOGTO_ENDPOINT: z.string().url().optional(),
     LOGTO_APP_ID: z.string().min(1).optional(),
     LOGTO_APP_SECRET: z.string().min(1).optional(),
