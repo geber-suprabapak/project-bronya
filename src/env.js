@@ -49,9 +49,10 @@ export const env = createEnv({
 });
 
 /**
- * Optional schemas keep local static builds usable without external services.
- * A production process must provide the complete Logto/Astra boundary and
- * fails at boot with the missing variable names if it does not.
+ * Required production variables are evaluated by the readiness endpoint.
+ * This module is also imported by Next's edge middleware, so it must not throw
+ * during module evaluation; otherwise /api/health cannot return its actionable
+ * 503 configuration report.
  */
 export const PRODUCTION_REQUIRED_ENV = [
   "ASTRA_API_URL",
@@ -66,23 +67,4 @@ export const PRODUCTION_REQUIRED_ENV = [
 
 export function getMissingProductionEnv(input = process.env) {
   return PRODUCTION_REQUIRED_ENV.filter((name) => !input[name]?.trim());
-}
-
-// Next evaluates server modules while producing the build. Defer the strict
-// production boot check until the deployed process starts; the readiness
-// endpoint still reports the same missing values during development/builds.
-const isNextProductionBuild =
-  process.env.NEXT_PHASE === "phase-production-build";
-
-if (
-  env.NODE_ENV === "production" &&
-  !process.env.SKIP_ENV_VALIDATION &&
-  !isNextProductionBuild
-) {
-  const missing = getMissingProductionEnv();
-  if (missing.length > 0) {
-    throw new Error(
-      `[env] Missing required production configuration: ${missing.join(", ")}`,
-    );
-  }
 }
