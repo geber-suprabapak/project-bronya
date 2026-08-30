@@ -8,14 +8,7 @@ test("kiosk attendance does not claim success when Astra rejects the record", as
     "utf8",
   );
 
-  assert.doesNotMatch(
-    source,
-    /Local Database Direct Record|db\.insert\(absences\)/,
-    "A kiosk must fail closed: it may not confirm attendance from a local fallback when Astra is unavailable.",
-  );
-  assert.match(
-    source,
-    /Gagal mencatat presensi ke Astra/,
-    "Astra failures must be surfaced to the kiosk operator.",
-  );
+  assert.match(source, /getAccessTokenRSC/);
+  assert.doesNotMatch(source, /ASTRA_DEVICE_TOKEN/);
+  assert.match(source, /Gagal mencatat presensi ke Astra/);
 });

@@ -8,18 +8,23 @@ import {
 } from "@/lib/logto/claims";
 import { logtoConfig } from "@/lib/logto/config";
 
+const STATIC_ASSET = /\.(?:svg|png|jpg|jpeg|gif|webp|ico|css|js|map)$/;
+
 function isPublicPath(pathname: string): boolean {
   return (
     pathname === "/login" ||
     pathname === "/api/health" ||
     pathname.startsWith("/api/logto/") ||
     pathname.startsWith("/_next/") ||
-    pathname === "/favicon.ico"
+    pathname === "/favicon.ico" ||
+    STATIC_ASSET.test(pathname)
   );
 }
 
 export async function middleware(request: NextRequest) {
   const pathname = request.nextUrl.pathname;
+  // Logto's edge adapter owns request cookie state. Keep the client scoped to
+  // this request instead of sharing mutable state across concurrent requests.
   const logtoClient = new LogtoClient(logtoConfig);
 
   try {

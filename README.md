@@ -1,36 +1,59 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Project Bronya
 
-## Getting Started
+Bronya is Skanida's attendance-scanning kiosk. Logto owns operator login and
+the server session; Astra is the only authority for student lookup and
+attendance writes.
 
-First, run the development server:
+## Local development
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
+cp .env.example .env
+pnpm install
 pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Replace the Logto and Astra values in `.env` with the values for the local
+stack. The default infra ports are Logto at `http://localhost:23001` and Astra
+at `http://localhost:23000`. When Bronya runs in the same Docker network, use
+the service URL `http://astra:3000` for Astra.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+Register these exact URLs on the Logto application:
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```text
+${LOGTO_BASE_URL}/api/logto/callback
+${LOGTO_POST_LOGOUT_REDIRECT_URI}
+```
 
-## Learn More
+The Logto application must request the `LOGTO_RESOURCE` API resource and the
+`mobile:access` and `admin:read` scopes. The existing `testadmin` user should
+have the `school_admin` role and those two scopes.
 
-To learn more about Next.js, take a look at the following resources:
+## Authentication and Astra boundary
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+`/login` starts the Logto flow at `/api/logto/sign-in`; the callback stores the
+server session, and `/api/logto/sign-out` clears it. Middleware and the main
+route layout allow `platform_admin`, `school_admin`, `staff`, and `teacher`.
+Students and unknown roles are sent back to `/login?error=forbidden_role`.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+Every kiosk server action obtains the current session's Logto access token for
+`LOGTO_RESOURCE` with `getAccessTokenRSC` and forwards it to Astra. Attendance
+is fail-closed: if Astra rejects the operation, Bronya does not write a local
+database fallback or report success.
 
-## Deploy on Vercel
+## Configuration and checks
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+`.env.example` lists the complete runtime contract. Production requires
+`ASTRA_API_URL`, the Logto endpoint/app credentials, a cookie secret of at
+least 32 characters, `LOGTO_BASE_URL`, `LOGTO_RESOURCE`, and the post-logout
+redirect URI. `DATABASE_URL` is retained only for schema/tooling compatibility;
+the kiosk runtime does not write attendance directly to PostgreSQL.
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Readiness is exposed at `/api/health`: it returns `503` and names missing
+configuration until both the Astra and Logto boundaries are configured.
+
+```bash
+pnpm test
+pnpm lint
+pnpm exec tsc --noEmit
+pnpm build
+```

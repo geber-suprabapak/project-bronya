@@ -1,6 +1,8 @@
 "use server";
 
+import { getAccessTokenRSC } from "@logto/next/server-actions";
 import { env } from "~/env";
+import { logtoConfig } from "~/lib/logto/config";
 
 type AbsenceData = {
   userName: string;
@@ -156,13 +158,13 @@ interface AstraUserResponse {
       };
 }
 
-const astraHeaders = (): Record<string, string> => {
-  if (!env.ASTRA_DEVICE_TOKEN) {
-    throw new Error("Astra kiosk credential is not configured");
-  }
-
+const astraHeaders = async (): Promise<Record<string, string>> => {
+  // Astra must receive the access token for the currently authenticated Logto
+  // operator. A static device token would outlive or outlast the operator's
+  // session and could not enforce the user's current Astra scopes.
+  const accessToken = await getAccessTokenRSC(logtoConfig, env.LOGTO_RESOURCE);
   return {
-    Authorization: `Bearer ${env.ASTRA_DEVICE_TOKEN}`,
+    Authorization: `Bearer ${accessToken}`,
     "Content-Type": "application/json",
   };
 };
@@ -171,7 +173,7 @@ const findUserByNis = async (nis: string) => {
   const res = await fetch(
     `${env.ASTRA_API_URL}/v1/admin/users?nis=${encodeURIComponent(nis)}`,
     {
-      headers: astraHeaders(),
+      headers: await astraHeaders(),
       signal: AbortSignal.timeout(3000),
     },
   );
@@ -338,7 +340,7 @@ export async function saveAttendance(
       `${env.ASTRA_API_URL}/v1/admin/attendance/manual`,
       {
         method: "POST",
-        headers: astraHeaders(),
+        headers: await astraHeaders(),
         body: JSON.stringify({
           user_id: userProfile.userId,
           action_type: actionType,

@@ -14,6 +14,7 @@ import { cn } from "@/lib/utils";
 const ERROR_MESSAGES = {
   forbidden_role: "Akun ini tidak memiliki role operator Bronya.",
   unauthorized: "Sesi Logto tidak valid atau telah berakhir.",
+  session_unavailable: "Sesi Logto tidak tersedia. Silakan coba lagi.",
 } as const;
 
 export function LoginForm({

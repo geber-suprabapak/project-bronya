@@ -1,24 +1,21 @@
 import { NextResponse } from "next/server";
-import { env } from "@/env";
-import { isBronyaRuntimeConfigured } from "@/lib/logto/config";
+import {
+  getMissingBronyaRuntimeVariables,
+  isBronyaRuntimeConfigured,
+} from "@/lib/logto/config";
 
 export async function GET() {
   const configured = isBronyaRuntimeConfigured();
+  const missing = getMissingBronyaRuntimeVariables();
 
   return NextResponse.json(
     {
       status: configured ? "ok" : "misconfigured",
       timestamp: new Date().toISOString(),
+      missingConfiguration: missing,
       dependencies: {
-        astra: Boolean(env.ASTRA_API_URL && env.ASTRA_DEVICE_TOKEN),
-        logto: Boolean(
-          env.LOGTO_ENDPOINT &&
-            env.LOGTO_APP_ID &&
-            env.LOGTO_APP_SECRET &&
-            env.LOGTO_BASE_URL &&
-            env.LOGTO_COOKIE_SECRET &&
-            env.LOGTO_RESOURCE,
-        ),
+        astra: !missing.some((name) => name.startsWith("ASTRA_")),
+        logto: !missing.some((name) => name.startsWith("LOGTO_")),
       },
     },
     { status: configured ? 200 : 503 },

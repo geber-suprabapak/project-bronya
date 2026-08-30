@@ -16,9 +16,14 @@ export async function GET(request: NextRequest) {
   await handleSignIn(logtoConfig, callbackUrl);
 
   const context = await getLogtoContext(logtoConfig, { fetchUserInfo: true });
-  const role = resolveLogtoRole(extractExtendedClaims(context.claims)?.roles);
+  if (!context.isAuthenticated || !context.claims) {
+    redirect("/login?error=unauthorized");
+  }
 
-  if (!context.isAuthenticated || !isKioskOperatorRole(role)) {
+  const claims = extractExtendedClaims(context.claims);
+  const role = resolveLogtoRole(claims?.roles);
+
+  if (!isKioskOperatorRole(role)) {
     redirect("/login?error=forbidden_role");
   }
 
