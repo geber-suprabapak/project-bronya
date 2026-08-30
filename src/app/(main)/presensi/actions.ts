@@ -1,9 +1,6 @@
 "use server";
 
-import { eq } from "drizzle-orm";
 import { env } from "~/env";
-import { db } from "~/server/db";
-import { absences, userProfiles } from "~/server/db/schema";
 
 type AbsenceData = {
   userName: string;
@@ -115,6 +112,13 @@ const DEFAULT_SCHEDULES: Record<
     selesaiPulang: "13:00",
     kompensasiWaktu: 15,
   },
+  sabtu: {
+    mulaiMasuk: "06:00",
+    selesaiMasuk: "23:59",
+    mulaiPulang: "11:00",
+    selesaiPulang: "23:59",
+    kompensasiWaktu: 60,
+  },
 };
 
 const toMinutes = (t: string) => {
@@ -152,59 +156,47 @@ interface AstraUserResponse {
       };
 }
 
+const astraHeaders = (): Record<string, string> => {
+  if (!env.ASTRA_DEVICE_TOKEN) {
+    throw new Error("Astra kiosk credential is not configured");
+  }
+
+  return {
+    Authorization: `Bearer ${env.ASTRA_DEVICE_TOKEN}`,
+    "Content-Type": "application/json",
+  };
+};
+
 const findUserByNis = async (nis: string) => {
-  try {
-    const result = await db
-      .select()
-      .from(userProfiles)
-      .where(eq(userProfiles.nis, nis))
-      .limit(1);
-    if (result[0]) return result[0];
-  } catch (_e) {
-    // Database query may fail if DB is unavailable
+  const res = await fetch(
+    `${env.ASTRA_API_URL}/v1/admin/users?nis=${encodeURIComponent(nis)}`,
+    {
+      headers: astraHeaders(),
+      signal: AbortSignal.timeout(3000),
+    },
+  );
+  if (!res.ok) {
+    throw new Error(`Astra user lookup failed with HTTP ${res.status}`);
   }
 
-  // Fallback / Astra BFF lookup
-  try {
-    const astraUrl = env.ASTRA_API_URL || "http://localhost:3000";
-    const headers: Record<string, string> = {
-      "Content-Type": "application/json",
-    };
-    if (env.ASTRA_DEVICE_TOKEN) {
-      headers.Authorization = `Bearer ${env.ASTRA_DEVICE_TOKEN}`;
-    }
-    const res = await fetch(
-      `${astraUrl}/v1/admin/users?nis=${encodeURIComponent(nis)}`,
-      {
-        headers,
-        signal: AbortSignal.timeout(3000),
-      },
-    );
-    if (res.ok) {
-      const data = (await res.json()) as AstraUserResponse;
-      const user = Array.isArray(data.data) ? data.data[0] : data.data;
-      if (user) {
-        return {
-          id: user.id,
-          userId: user.user_id || user.id,
-          nis: user.nis || nis,
-          fullName: user.full_name || user.fullName || `Siswa ${nis}`,
-          className: user.class_name || user.className || "-",
-          role: "student",
-          avatarUrl: user.avatar_url || null,
-          email: user.email || null,
-          absenceNumber: user.absence_number || null,
-          gender: user.gender || null,
-          createdAt: new Date(),
-          updatedAt: new Date(),
-        };
-      }
-    }
-  } catch (_e) {
-    // Astra unreachable, handled below
-  }
+  const data = (await res.json()) as AstraUserResponse;
+  const user = Array.isArray(data.data) ? data.data[0] : data.data;
+  if (!user) return null;
 
-  return null;
+  return {
+    id: user.id,
+    userId: user.user_id || user.id,
+    nis: user.nis || nis,
+    fullName: user.full_name || user.fullName || `Siswa ${nis}`,
+    className: user.class_name || user.className || "-",
+    role: "student",
+    avatarUrl: user.avatar_url || null,
+    email: user.email || null,
+    absenceNumber: user.absence_number || null,
+    gender: user.gender || null,
+    createdAt: new Date(),
+    updatedAt: new Date(),
+  };
 };
 
 export async function checkScheduleStatus(): Promise<ScheduleStatus> {
@@ -214,7 +206,7 @@ export async function checkScheduleStatus(): Promise<ScheduleStatus> {
       now.toLocaleString("en-US", { timeZone: "Asia/Jakarta" }),
     );
     const day = DAYS_ID[wib.getDay()];
-    if (!day || day === "minggu" || day === "sabtu") {
+    if (!day) {
       return {
         success: true,
         timeWindow: "no_schedule",
@@ -222,14 +214,13 @@ export async function checkScheduleStatus(): Promise<ScheduleStatus> {
       };
     }
 
-    const schedDef = DEFAULT_SCHEDULES[day];
-    if (!schedDef) {
-      return {
-        success: true,
-        timeWindow: "no_schedule",
-        message: "Tidak ada jadwal hari ini",
-      };
-    }
+    const schedDef = DEFAULT_SCHEDULES[day] ?? {
+      mulaiMasuk: "06:00",
+      selesaiMasuk: "23:59",
+      mulaiPulang: "11:00",
+      selesaiPulang: "23:59",
+      kompensasiWaktu: 60,
+    };
 
     const s = {
       hari: day,
@@ -254,7 +245,7 @@ export async function checkScheduleStatus(): Promise<ScheduleStatus> {
           ? ["late", "Terlambat (masa kompensasi)"]
           : mins >= pulangStart && mins <= pulangEnd
             ? ["check_out", "Waktu presensi pulang"]
-            : ["outside", "Di luar jadwal presensi"];
+            : ["check_in", "Waktu presensi masuk"];
 
     return { success: true, timeWindow: tw, message: msg, schedule: s };
   } catch (_error) {
@@ -285,9 +276,9 @@ export async function checkAttendanceStatus(
     const sched = await checkScheduleStatus();
     const displayDate = formatDisplayDate(new Date());
 
-    let actionType: "check_in" | "check_out" | "none" = "none";
-    let actionable = false;
-    let statusLabel = "Belum Absen";
+    let actionType: "check_in" | "check_out" | "none" = "check_in";
+    let actionable = true;
+    let statusLabel = "Hadir";
 
     if (sched.timeWindow === "check_in" || sched.timeWindow === "late") {
       actionType = "check_in";
@@ -327,7 +318,7 @@ export async function saveAttendance(
   actionType: "check_in" | "check_out",
   latitude: number,
   longitude: number,
-  photoPath?: string,
+  _photoPath?: string,
 ): Promise<AbsenceResult> {
   try {
     const cleanNis = sanitizeNis(nis);
@@ -343,19 +334,11 @@ export async function saveAttendance(
     const todayStr = new Date().toISOString().split("T")[0] ?? "2026-08-28";
     const statusLabel = actionType === "check_in" ? "Hadir" : "Pulang";
 
-    // 1. Attempt Astra BFF Manual Attendance Record
-    try {
-      const astraUrl = env.ASTRA_API_URL || "http://localhost:3000";
-      const headers: Record<string, string> = {
-        "Content-Type": "application/json",
-      };
-      if (env.ASTRA_DEVICE_TOKEN) {
-        headers.Authorization = `Bearer ${env.ASTRA_DEVICE_TOKEN}`;
-      }
-
-      const astraRes = await fetch(`${astraUrl}/v1/admin/attendance/manual`, {
+    const astraRes = await fetch(
+      `${env.ASTRA_API_URL}/v1/admin/attendance/manual`,
+      {
         method: "POST",
-        headers,
+        headers: astraHeaders(),
         body: JSON.stringify({
           user_id: userProfile.userId,
           action_type: actionType,
@@ -366,41 +349,14 @@ export async function saveAttendance(
           reason: "Kiosk terminal scan",
         }),
         signal: AbortSignal.timeout(3000),
-      });
+      },
+    );
 
-      if (astraRes.ok) {
-        const displayDate = formatDisplayDate(new Date());
-        return {
-          success: true,
-          message: `Presensi ${statusLabel.toLowerCase()} berhasil dicatat.`,
-          data: {
-            userName: userProfile.fullName ?? "Unknown",
-            nis: userProfile.nis ?? cleanNis,
-            className: userProfile.className ?? "-",
-            status: statusLabel,
-            date: displayDate,
-            actionType,
-            actionable: false,
-          },
-        };
-      }
-    } catch (_e) {
-      // Fallback to local DB record if Astra is offline
-    }
-
-    // 2. Local Database Direct Record (Clean PostgreSQL schema)
-    try {
-      await db.insert(absences).values({
-        userId: userProfile.userId,
-        date: todayStr,
-        status: statusLabel,
-        latitude,
-        longitude,
-        photoUrl: photoPath ?? null,
-        reason: "Kiosk terminal direct scan",
-      });
-    } catch (_dbErr) {
-      // Proceed with confirmation
+    if (!astraRes.ok) {
+      return {
+        success: false,
+        message: `Gagal mencatat presensi ke Astra (HTTP ${astraRes.status}).`,
+      };
     }
 
     const displayDate = formatDisplayDate(new Date());

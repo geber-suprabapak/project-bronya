@@ -1,65 +1,58 @@
-import { createServerClient } from "@supabase/ssr";
-import { type NextRequest, NextResponse } from "next/server";
+import LogtoClient from "@logto/next/edge";
+import type { NextRequest } from "next/server";
+import { NextResponse } from "next/server";
+import {
+  extractExtendedClaims,
+  isKioskOperatorRole,
+  resolveLogtoRole,
+} from "@/lib/logto/claims";
+import { logtoConfig } from "@/lib/logto/config";
+
+function isPublicPath(pathname: string): boolean {
+  return (
+    pathname === "/login" ||
+    pathname === "/api/health" ||
+    pathname.startsWith("/api/logto/") ||
+    pathname.startsWith("/_next/") ||
+    pathname === "/favicon.ico"
+  );
+}
 
 export async function middleware(request: NextRequest) {
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  const pathname = request.nextUrl.pathname;
+  const logtoClient = new LogtoClient(logtoConfig);
 
-  if (!supabaseUrl || !supabaseAnonKey) {
-    // In clean-slate / Astra BFF Kiosk mode, pass through to allow terminal operation
-    return NextResponse.next({ request });
+  try {
+    const context = await logtoClient.getLogtoContext(request);
+    const role = resolveLogtoRole(extractExtendedClaims(context.claims)?.roles);
+
+    if (context.isAuthenticated && isKioskOperatorRole(role)) {
+      if (pathname === "/login") {
+        return NextResponse.redirect(new URL("/presensi", request.url));
+      }
+      return NextResponse.next();
+    }
+
+    if (context.isAuthenticated && !isPublicPath(pathname)) {
+      return NextResponse.redirect(
+        new URL("/login?error=forbidden_role", request.url),
+      );
+    }
+  } catch (error) {
+    if (process.env.NODE_ENV === "development") {
+      console.warn("[bronya] Logto session lookup failed", error);
+    }
   }
 
-  let supabaseResponse = NextResponse.next({
-    request,
-  });
-
-  const supabase = createServerClient(supabaseUrl, supabaseAnonKey, {
-    cookies: {
-      getAll() {
-        return request.cookies.getAll();
-      },
-      setAll(cookiesToSet) {
-        for (const { name, value } of cookiesToSet) {
-          request.cookies.set(name, value);
-        }
-        supabaseResponse = NextResponse.next({
-          request,
-        });
-        for (const { name, value, options } of cookiesToSet) {
-          supabaseResponse.cookies.set(name, value, options);
-        }
-      },
-    },
-  });
-
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  // Protected routes - redirect to login if not authenticated
-  if (
-    !user &&
-    (request.nextUrl.pathname.startsWith("/presensi") ||
-      request.nextUrl.pathname.match(/^\/\(main\)/))
-  ) {
-    const url = request.nextUrl.clone();
-    url.pathname = "/login";
-    return NextResponse.redirect(url);
+  if (!isPublicPath(pathname)) {
+    const loginUrl = new URL("/login", request.url);
+    loginUrl.searchParams.set("redirect", pathname);
+    return NextResponse.redirect(loginUrl);
   }
 
-  // Redirect to index if already logged in and trying to access login
-  if (user && request.nextUrl.pathname === "/login") {
-    const url = request.nextUrl.clone();
-    url.pathname = "/presensi";
-    return NextResponse.redirect(url);
-  }
-
-  return supabaseResponse;
+  return NextResponse.next();
 }
 
 export const config = {
-  matcher: [
-    "/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
-  ],
+  matcher: ["/(.*)"],
 };
