@@ -10,6 +10,8 @@ test("kiosk attendance does not claim success when Astra rejects the record", as
 
   assert.match(source, /getAccessToken\(logtoConfig, env\.LOGTO_RESOURCE\)/);
   assert.doesNotMatch(source, /getAccessTokenRSC/);
+  assert.match(source, /getAstraTokenDiagnostics/);
+  assert.match(source, /Astra rejected the Logto access token/);
   assert.match(source, /"X-Astra-Contract-Version": "v1"/);
   assert.doesNotMatch(source, /ASTRA_DEVICE_TOKEN/);
   assert.match(source, /Gagal mencatat presensi ke Astra/);

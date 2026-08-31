@@ -166,6 +166,50 @@ const astraApiUrl = (): string => {
   return env.ASTRA_API_URL;
 };
 
+const getAstraTokenDiagnostics = (headers: Record<string, string>) => {
+  const token = headers.Authorization?.replace(/^Bearer\s+/, "");
+  const payloadSegment = token?.split(".")[1];
+
+  if (!payloadSegment) {
+    return { format: "not-a-jwt" };
+  }
+
+  try {
+    const payload = JSON.parse(
+      Buffer.from(payloadSegment, "base64url").toString("utf8"),
+    ) as {
+      iss?: unknown;
+      aud?: unknown;
+      scope?: unknown;
+      exp?: unknown;
+    };
+    const audience = Array.isArray(payload.aud)
+      ? payload.aud.filter(
+          (value): value is string => typeof value === "string",
+        )
+      : typeof payload.aud === "string"
+        ? [payload.aud]
+        : [];
+    const scopes =
+      typeof payload.scope === "string"
+        ? payload.scope.split(" ").filter(Boolean)
+        : [];
+
+    return {
+      format: "jwt",
+      issuer: typeof payload.iss === "string" ? payload.iss : null,
+      audience,
+      scopes,
+      expired:
+        typeof payload.exp === "number"
+          ? payload.exp <= Date.now() / 1000
+          : null,
+    };
+  } catch {
+    return { format: "malformed-jwt" };
+  }
+};
+
 const astraHeaders = async (): Promise<Record<string, string>> => {
   // Astra must receive the access token for the currently authenticated Logto
   // operator. A static device token would outlive or outlast the operator's
@@ -179,14 +223,21 @@ const astraHeaders = async (): Promise<Record<string, string>> => {
 };
 
 const findUserByNis = async (nis: string) => {
+  const headers = await astraHeaders();
   const res = await fetch(
     `${astraApiUrl()}/v1/admin/users?nis=${encodeURIComponent(nis)}`,
     {
-      headers: await astraHeaders(),
+      headers,
       signal: AbortSignal.timeout(3000),
     },
   );
   if (!res.ok) {
+    if (res.status === 401) {
+      console.warn(
+        "Astra rejected the Logto access token",
+        getAstraTokenDiagnostics(headers),
+      );
+    }
     throw new Error(`Astra user lookup failed with HTTP ${res.status}`);
   }
 
