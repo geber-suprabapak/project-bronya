@@ -186,12 +186,29 @@ interface AstraAttendanceResponse {
 interface AstraSchedule {
   id?: string;
   day_of_week?: string;
+  hari?: string;
   start_time?: string;
+  startTime?: string;
   end_time?: string;
+  endTime?: string;
   start_checkout?: string;
+  startCheckout?: string;
   end_checkout?: string;
-  grace_period_minutes?: number;
+  endCheckout?: string;
+  mulai_masuk?: string | null;
+  mulaiMasuk?: string | null;
+  selesai_masuk?: string | null;
+  selesaiMasuk?: string | null;
+  mulai_pulang?: string | null;
+  mulaiPulang?: string | null;
+  selesai_pulang?: string | null;
+  selesaiPulang?: string | null;
+  kompensasi_waktu?: number | null;
+  kompensasiWaktu?: number | null;
+  grace_period_minutes?: number | null;
+  gracePeriodMinutes?: number | null;
   is_active?: boolean;
+  isActive?: boolean;
 }
 
 interface AstraSchedulesResponse {
@@ -387,21 +404,51 @@ const fetchActiveScheduleFromAstra = async (
         ? (data as AstraSchedule[])
         : [];
     const active = schedules.find(
-      (s) => s.day_of_week === day && s.is_active !== false,
+      (s) =>
+        (s.day_of_week === day || s.hari === day) &&
+        s.is_active !== false &&
+        s.isActive !== false,
     );
-    if (!active || !active.start_time || !active.end_time) return null;
+    if (!active) return null;
 
-    const normalizeTime = (t: string) => t.slice(0, 5);
+    const normalizeTime = (t?: string | null) => (t ? t.slice(0, 5) : null);
+
+    const mulaiMasuk =
+      normalizeTime(active.mulai_masuk) ||
+      normalizeTime(active.mulaiMasuk) ||
+      normalizeTime(active.start_time) ||
+      normalizeTime(active.startTime);
+    const selesaiMasuk =
+      normalizeTime(active.selesai_masuk) ||
+      normalizeTime(active.selesaiMasuk) ||
+      normalizeTime(active.end_time) ||
+      normalizeTime(active.endTime);
+    const mulaiPulang =
+      normalizeTime(active.mulai_pulang) ||
+      normalizeTime(active.mulaiPulang) ||
+      normalizeTime(active.start_checkout) ||
+      normalizeTime(active.startCheckout);
+    const selesaiPulang =
+      normalizeTime(active.selesai_pulang) ||
+      normalizeTime(active.selesaiPulang) ||
+      normalizeTime(active.end_checkout) ||
+      normalizeTime(active.endCheckout);
+
+    if (!mulaiMasuk || !selesaiMasuk) return null;
+
+    const kompensasi =
+      active.kompensasi_waktu ??
+      active.kompensasiWaktu ??
+      active.grace_period_minutes ??
+      active.gracePeriodMinutes ??
+      15;
+
     return {
-      mulaiMasuk: normalizeTime(active.start_time),
-      selesaiMasuk: normalizeTime(active.end_time),
-      mulaiPulang: active.start_checkout
-        ? normalizeTime(active.start_checkout)
-        : "15:30",
-      selesaiPulang: active.end_checkout
-        ? normalizeTime(active.end_checkout)
-        : "17:00",
-      kompensasiWaktu: active.grace_period_minutes ?? 15,
+      mulaiMasuk,
+      selesaiMasuk,
+      mulaiPulang: mulaiPulang ?? "15:30",
+      selesaiPulang: selesaiPulang ?? "17:00",
+      kompensasiWaktu: kompensasi,
     };
   } catch {
     return null;
