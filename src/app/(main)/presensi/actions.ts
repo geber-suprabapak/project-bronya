@@ -128,34 +128,29 @@ const toMinutes = (t: string) => {
   return (h ?? 0) * 60 + (m ?? 0);
 };
 
-interface AstraUserResponse {
-  data?:
-    | Array<{
-        id: string;
-        user_id?: string;
-        nis?: string;
-        full_name?: string;
-        fullName?: string;
-        class_name?: string;
-        className?: string;
-        avatar_url?: string;
-        email?: string;
-        absence_number?: string;
-        gender?: string;
-      }>
-    | {
-        id: string;
-        user_id?: string;
-        nis?: string;
-        full_name?: string;
-        fullName?: string;
-        class_name?: string;
-        className?: string;
-        avatar_url?: string;
-        email?: string;
-        absence_number?: string;
-        gender?: string;
-      };
+interface AstraStudent {
+  id?: string;
+  user_id?: string;
+  userId?: string;
+  nis?: string;
+  full_name?: string;
+  fullName?: string;
+  class_name?: string;
+  className?: string;
+  avatar_url?: string;
+  avatarUrl?: string;
+  email?: string;
+  absence_number?: string;
+  absenceNumber?: string;
+  gender?: string;
+  role?: string;
+  lifecycle_status?: string;
+}
+
+interface AstraStudentsResponse {
+  success?: boolean;
+  message?: string;
+  data?: AstraStudent[];
 }
 
 const astraApiUrl = (): string => {
@@ -223,14 +218,12 @@ const astraHeaders = async (): Promise<Record<string, string>> => {
 };
 
 const findUserByNis = async (nis: string) => {
+  const cleanNis = sanitizeNis(nis);
   const headers = await astraHeaders();
-  const res = await fetch(
-    `${astraApiUrl()}/v1/admin/users?nis=${encodeURIComponent(nis)}`,
-    {
-      headers,
-      signal: AbortSignal.timeout(3000),
-    },
-  );
+  const res = await fetch(`${astraApiUrl()}/v1/admin/students`, {
+    headers,
+    signal: AbortSignal.timeout(3000),
+  });
   if (!res.ok) {
     if (res.status === 401) {
       console.warn(
@@ -238,24 +231,30 @@ const findUserByNis = async (nis: string) => {
         getAstraTokenDiagnostics(headers),
       );
     }
-    throw new Error(`Astra user lookup failed with HTTP ${res.status}`);
+    throw new Error(`Astra student lookup failed with HTTP ${res.status}`);
   }
 
-  const data = (await res.json()) as AstraUserResponse;
-  const user = Array.isArray(data.data) ? data.data[0] : data.data;
-  if (!user) return null;
+  const data = (await res.json()) as AstraStudentsResponse;
+  const students = Array.isArray(data.data)
+    ? data.data
+    : Array.isArray(data)
+      ? (data as AstraStudent[])
+      : [];
+
+  const student = students.find((s) => s.nis === cleanNis);
+  if (!student) return null;
 
   return {
-    id: user.id,
-    userId: user.user_id || user.id,
-    nis: user.nis || nis,
-    fullName: user.full_name || user.fullName || `Siswa ${nis}`,
-    className: user.class_name || user.className || "-",
-    role: "student",
-    avatarUrl: user.avatar_url || null,
-    email: user.email || null,
-    absenceNumber: user.absence_number || null,
-    gender: user.gender || null,
+    id: student.id || student.user_id || student.userId || "",
+    userId: student.user_id || student.userId || student.id || "",
+    nis: student.nis || cleanNis,
+    fullName: student.full_name || student.fullName || `Siswa ${cleanNis}`,
+    className: student.class_name || student.className || "-",
+    role: student.role || "student",
+    gender: student.gender || null,
+    absenceNumber: student.absence_number || student.absenceNumber || null,
+    avatarUrl: student.avatar_url || student.avatarUrl || null,
+    email: student.email || null,
     createdAt: new Date(),
     updatedAt: new Date(),
   };
@@ -404,7 +403,7 @@ export async function saveAttendance(
         body: JSON.stringify({
           user_id: userProfile.userId,
           action_type: actionType,
-          status: statusLabel.toLowerCase(),
+          status: statusLabel,
           date: todayStr,
           latitude,
           longitude,
