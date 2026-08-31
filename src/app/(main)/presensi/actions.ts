@@ -1,6 +1,6 @@
 "use server";
 
-import { getAccessTokenRSC } from "@logto/next/server-actions";
+import { getAccessToken } from "@logto/next/server-actions";
 import { env } from "~/env";
 import { logtoConfig } from "~/lib/logto/config";
 
@@ -170,7 +170,7 @@ const astraHeaders = async (): Promise<Record<string, string>> => {
   // Astra must receive the access token for the currently authenticated Logto
   // operator. A static device token would outlive or outlast the operator's
   // session and could not enforce the user's current Astra scopes.
-  const accessToken = await getAccessTokenRSC(logtoConfig, env.LOGTO_RESOURCE);
+  const accessToken = await getAccessToken(logtoConfig, env.LOGTO_RESOURCE);
   return {
     Authorization: `Bearer ${accessToken}`,
     "Content-Type": "application/json",
