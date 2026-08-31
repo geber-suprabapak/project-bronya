@@ -583,3 +583,200 @@ test("Challenge 8: High-Scale Directory Search Performance (10,000 students)", (
     `10,000 student lookup took ${duration}ms, must be < 50ms`,
   );
 });
+
+test("Challenge 9: Attendance 3-Step Lifecycle & Anti-Duplicate State Evaluation", () => {
+  type ScheduleTimeWindow =
+    | "before_check_in"
+    | "check_in"
+    | "late"
+    | "between_windows"
+    | "check_out"
+    | "after_check_out";
+
+  interface AttendanceRecord {
+    action_type?: string;
+    status?: string;
+  }
+
+  const evaluateAttendanceAction = (
+    timeWindow: ScheduleTimeWindow,
+    records: AttendanceRecord[],
+  ) => {
+    const hasCheckedIn = records.some(
+      (r) =>
+        r.action_type === "check_in" ||
+        r.status === "Hadir" ||
+        r.status === "Terlambat",
+    );
+    const hasCheckedOut = records.some(
+      (r) => r.action_type === "check_out" || r.status === "Pulang",
+    );
+
+    if (hasCheckedOut) {
+      return {
+        actionable: false,
+        actionType: "none",
+        status: "Selesai",
+        alreadyPresent: true,
+      };
+    }
+
+    if (timeWindow === "before_check_in") {
+      return {
+        actionable: false,
+        actionType: "none",
+        status: "Belum Waktunya",
+        alreadyPresent: hasCheckedIn,
+      };
+    }
+
+    if (timeWindow === "check_in" || timeWindow === "late") {
+      if (hasCheckedIn) {
+        return {
+          actionable: false,
+          actionType: "none",
+          status: "Sudah Masuk",
+          alreadyPresent: true,
+        };
+      }
+      return {
+        actionable: true,
+        actionType: "check_in",
+        status: timeWindow === "late" ? "Terlambat" : "Hadir",
+        alreadyPresent: false,
+      };
+    }
+
+    if (timeWindow === "between_windows") {
+      if (hasCheckedIn) {
+        return {
+          actionable: false,
+          actionType: "none",
+          status: "Menunggu Pulang",
+          alreadyPresent: true,
+        };
+      }
+      return {
+        actionable: false,
+        actionType: "none",
+        status: "Waktu Habis",
+        alreadyPresent: false,
+      };
+    }
+
+    if (timeWindow === "check_out") {
+      return {
+        actionable: true,
+        actionType: "check_out",
+        status: "Pulang",
+        alreadyPresent: false,
+      };
+    }
+
+    return {
+      actionable: false,
+      actionType: "none",
+      status: hasCheckedIn ? "Selesai" : "Tutup",
+      alreadyPresent: hasCheckedIn || hasCheckedOut,
+    };
+  };
+
+  // Step 1: Pagi belum absen -> actionable check_in
+  const step1 = evaluateAttendanceAction("check_in", []);
+  assert.equal(step1.actionable, true);
+  assert.equal(step1.actionType, "check_in");
+  assert.equal(step1.status, "Hadir");
+
+  // Step 1.2: Pagi sudah absen masuk -> ditolak (anti-duplicate)
+  const step1Duplicate = evaluateAttendanceAction("check_in", [
+    { action_type: "check_in", status: "Hadir" },
+  ]);
+  assert.equal(step1Duplicate.actionable, false);
+  assert.equal(step1Duplicate.actionType, "none");
+  assert.equal(step1Duplicate.alreadyPresent, true);
+  assert.equal(step1Duplicate.status, "Sudah Masuk");
+
+  // Step 2.1: Siang antara jam masuk & pulang (belum absen) -> ditolak waktu habis
+  const step2NoCheckin = evaluateAttendanceAction("between_windows", []);
+  assert.equal(step2NoCheckin.actionable, false);
+  assert.equal(step2NoCheckin.status, "Waktu Habis");
+
+  // Step 2.2: Siang antara jam masuk & pulang (sudah absen masuk) -> menunggu pulang
+  const step2Waiting = evaluateAttendanceAction("between_windows", [
+    { action_type: "check_in", status: "Hadir" },
+  ]);
+  assert.equal(step2Waiting.actionable, false);
+  assert.equal(step2Waiting.status, "Menunggu Pulang");
+
+  // Step 3: Sore jam pulang -> actionable check_out
+  const step3 = evaluateAttendanceAction("check_out", [
+    { action_type: "check_in", status: "Hadir" },
+  ]);
+  assert.equal(step3.actionable, true);
+  assert.equal(step3.actionType, "check_out");
+  assert.equal(step3.status, "Pulang");
+
+  // Step 4: Setelah absen pulang -> ditolak & status Selesai
+  const step4 = evaluateAttendanceAction("check_out", [
+    { action_type: "check_in", status: "Hadir" },
+    { action_type: "check_out", status: "Pulang" },
+  ]);
+  assert.equal(step4.actionable, false);
+  assert.equal(step4.status, "Selesai");
+  assert.equal(step4.alreadyPresent, true);
+});
+
+test("Challenge 10: Strict Schedule Time Window Calculations", () => {
+  const toMinutes = (t: string) => {
+    const [h, m] = t.split(":").map(Number);
+    return (h ?? 0) * 60 + (m ?? 0);
+  };
+
+  const getWindow = (
+    timeStr: string,
+    sched: {
+      mulaiMasuk: string;
+      selesaiMasuk: string;
+      mulaiPulang: string;
+      selesaiPulang: string;
+      kompensasiWaktu: number;
+    },
+  ) => {
+    const mins = toMinutes(timeStr);
+    const masukStart = toMinutes(sched.mulaiMasuk);
+    const masukEnd = toMinutes(sched.selesaiMasuk);
+    const masukLate = masukEnd + sched.kompensasiWaktu;
+    const pulangStart = toMinutes(sched.mulaiPulang);
+    const pulangEnd = toMinutes(sched.selesaiPulang);
+
+    if (mins < masukStart) return "before_check_in";
+    if (mins <= masukEnd) return "check_in";
+    if (mins <= masukLate) return "late";
+    if (mins < pulangStart) return "between_windows";
+    if (mins <= pulangEnd) return "check_out";
+    return "after_check_out";
+  };
+
+  const sched = {
+    mulaiMasuk: "06:30",
+    selesaiMasuk: "07:15",
+    mulaiPulang: "15:30",
+    selesaiPulang: "17:00",
+    kompensasiWaktu: 15,
+  };
+
+  assert.equal(getWindow("06:00", sched), "before_check_in");
+  assert.equal(getWindow("06:30", sched), "check_in");
+  assert.equal(getWindow("07:00", sched), "check_in");
+  assert.equal(getWindow("07:15", sched), "check_in");
+  assert.equal(getWindow("07:20", sched), "late");
+  assert.equal(getWindow("07:30", sched), "late");
+  assert.equal(getWindow("07:31", sched), "between_windows");
+  assert.equal(getWindow("12:00", sched), "between_windows");
+  assert.equal(getWindow("15:30", sched), "check_out");
+  assert.equal(getWindow("16:30", sched), "check_out");
+  assert.equal(getWindow("17:00", sched), "check_out");
+  assert.equal(getWindow("17:01", sched), "after_check_out");
+  assert.equal(getWindow("20:00", sched), "after_check_out");
+});
+

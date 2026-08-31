@@ -38,10 +38,23 @@ const sanitizeNis = (input: string) => {
   return clean.replace(/\D/g, "");
 };
 
-type ScheduleTimeWindow =
+const getWibDateStr = (date: Date = new Date()) => {
+  const wib = new Date(
+    date.toLocaleString("en-US", { timeZone: "Asia/Jakarta" }),
+  );
+  const y = wib.getFullYear();
+  const m = String(wib.getMonth() + 1).padStart(2, "0");
+  const d = String(wib.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+};
+
+export type ScheduleTimeWindow =
+  | "before_check_in"
   | "check_in"
   | "late"
+  | "between_windows"
   | "check_out"
+  | "after_check_out"
   | "outside"
   | "no_schedule";
 
@@ -153,6 +166,40 @@ interface AstraStudentsResponse {
   data?: AstraStudent[];
 }
 
+interface AstraAttendance {
+  id?: string;
+  user_id?: string;
+  userId?: string;
+  date?: string;
+  status?: string;
+  action_type?: string;
+  actionType?: string;
+  created_at?: string;
+}
+
+interface AstraAttendanceResponse {
+  success?: boolean;
+  message?: string;
+  data?: AstraAttendance[];
+}
+
+interface AstraSchedule {
+  id?: string;
+  day_of_week?: string;
+  start_time?: string;
+  end_time?: string;
+  start_checkout?: string;
+  end_checkout?: string;
+  grace_period_minutes?: number;
+  is_active?: boolean;
+}
+
+interface AstraSchedulesResponse {
+  success?: boolean;
+  message?: string;
+  data?: AstraSchedule[];
+}
+
 const astraApiUrl = (): string => {
   if (!env.ASTRA_API_URL) {
     throw new Error("Astra API URL is not configured");
@@ -260,6 +307,107 @@ const findUserByNis = async (nis: string) => {
   };
 };
 
+const getStudentAttendanceToday = async (
+  userId: string,
+  dateStr: string,
+): Promise<{
+  hasCheckedIn: boolean;
+  hasCheckedOut: boolean;
+  checkInRecord?: AstraAttendance;
+  checkOutRecord?: AstraAttendance;
+}> => {
+  try {
+    const headers = await astraHeaders();
+    const res = await fetch(
+      `${astraApiUrl()}/v1/admin/attendance?userId=${encodeURIComponent(userId)}&date=${encodeURIComponent(dateStr)}`,
+      {
+        headers,
+        signal: AbortSignal.timeout(3000),
+      },
+    );
+    if (!res.ok) {
+      return { hasCheckedIn: false, hasCheckedOut: false };
+    }
+    const data = (await res.json()) as AstraAttendanceResponse;
+    const records = Array.isArray(data.data)
+      ? data.data
+      : Array.isArray(data)
+        ? (data as AstraAttendance[])
+        : [];
+
+    const checkInRecord = records.find(
+      (r) =>
+        r.action_type === "check_in" ||
+        r.actionType === "check_in" ||
+        r.status === "Hadir" ||
+        r.status === "Terlambat",
+    );
+    const checkOutRecord = records.find(
+      (r) =>
+        r.action_type === "check_out" ||
+        r.actionType === "check_out" ||
+        r.status === "Pulang",
+    );
+
+    return {
+      hasCheckedIn: Boolean(checkInRecord),
+      hasCheckedOut: Boolean(checkOutRecord),
+      checkInRecord,
+      checkOutRecord,
+    };
+  } catch (error) {
+    console.error("Error fetching student attendance history:", error);
+    return { hasCheckedIn: false, hasCheckedOut: false };
+  }
+};
+
+const fetchActiveScheduleFromAstra = async (
+  day: string,
+): Promise<{
+  mulaiMasuk: string;
+  selesaiMasuk: string;
+  mulaiPulang: string;
+  selesaiPulang: string;
+  kompensasiWaktu: number;
+} | null> => {
+  try {
+    const headers = await astraHeaders();
+    const res = await fetch(
+      `${astraApiUrl()}/v1/admin/schedules?day_of_week=${encodeURIComponent(day)}&is_active=true`,
+      {
+        headers,
+        signal: AbortSignal.timeout(3000),
+      },
+    );
+    if (!res.ok) return null;
+    const data = (await res.json()) as AstraSchedulesResponse;
+    const schedules = Array.isArray(data.data)
+      ? data.data
+      : Array.isArray(data)
+        ? (data as AstraSchedule[])
+        : [];
+    const active = schedules.find(
+      (s) => s.day_of_week === day && s.is_active !== false,
+    );
+    if (!active || !active.start_time || !active.end_time) return null;
+
+    const normalizeTime = (t: string) => t.slice(0, 5);
+    return {
+      mulaiMasuk: normalizeTime(active.start_time),
+      selesaiMasuk: normalizeTime(active.end_time),
+      mulaiPulang: active.start_checkout
+        ? normalizeTime(active.start_checkout)
+        : "15:30",
+      selesaiPulang: active.end_checkout
+        ? normalizeTime(active.end_checkout)
+        : "17:00",
+      kompensasiWaktu: active.grace_period_minutes ?? 15,
+    };
+  } catch {
+    return null;
+  }
+};
+
 export async function checkScheduleStatus(): Promise<ScheduleStatus> {
   try {
     const now = new Date();
@@ -275,12 +423,13 @@ export async function checkScheduleStatus(): Promise<ScheduleStatus> {
       };
     }
 
-    const schedDef = DEFAULT_SCHEDULES[day] ?? {
-      mulaiMasuk: "06:00",
-      selesaiMasuk: "23:59",
-      mulaiPulang: "11:00",
-      selesaiPulang: "23:59",
-      kompensasiWaktu: 60,
+    const astraSched = await fetchActiveScheduleFromAstra(day);
+    const schedDef = astraSched ?? DEFAULT_SCHEDULES[day] ?? {
+      mulaiMasuk: "06:30",
+      selesaiMasuk: "07:15",
+      mulaiPulang: "15:30",
+      selesaiPulang: "17:00",
+      kompensasiWaktu: 15,
     };
 
     const s = {
@@ -299,14 +448,28 @@ export async function checkScheduleStatus(): Promise<ScheduleStatus> {
     const pulangStart = toMinutes(s.mulaiPulang);
     const pulangEnd = toMinutes(s.selesaiPulang);
 
-    const [tw, msg]: [ScheduleTimeWindow, string] =
-      mins >= masukStart && mins <= masukEnd
-        ? ["check_in", "Waktu presensi masuk"]
-        : mins > masukEnd && mins <= masukLate
-          ? ["late", "Terlambat (masa kompensasi)"]
-          : mins >= pulangStart && mins <= pulangEnd
-            ? ["check_out", "Waktu presensi pulang"]
-            : ["check_in", "Waktu presensi masuk"];
+    let tw: ScheduleTimeWindow;
+    let msg: string;
+
+    if (mins < masukStart) {
+      tw = "before_check_in";
+      msg = `Belum masuk waktu presensi masuk (dibuka pukul ${s.mulaiMasuk})`;
+    } else if (mins <= masukEnd) {
+      tw = "check_in";
+      msg = "Waktu presensi masuk";
+    } else if (mins <= masukLate) {
+      tw = "late";
+      msg = "Terlambat (masa kompensasi)";
+    } else if (mins < pulangStart) {
+      tw = "between_windows";
+      msg = `Waktu presensi masuk telah habis. Presensi pulang dibuka pukul ${s.mulaiPulang}`;
+    } else if (mins <= pulangEnd) {
+      tw = "check_out";
+      msg = "Waktu presensi pulang";
+    } else {
+      tw = "after_check_out";
+      msg = "Waktu presensi hari ini telah berakhir";
+    }
 
     return { success: true, timeWindow: tw, message: msg, schedule: s };
   } catch (_error) {
@@ -334,35 +497,153 @@ export async function checkAttendanceStatus(
       };
     }
 
-    const sched = await checkScheduleStatus();
+    const todayStr = getWibDateStr(new Date());
+    const [sched, history] = await Promise.all([
+      checkScheduleStatus(),
+      getStudentAttendanceToday(userProfile.userId, todayStr),
+    ]);
+
     const displayDate = formatDisplayDate(new Date());
+    const { hasCheckedIn, hasCheckedOut } = history;
 
-    let actionType: "check_in" | "check_out" | "none" = "check_in";
-    let actionable = true;
-    let statusLabel = "Hadir";
-
-    if (sched.timeWindow === "check_in" || sched.timeWindow === "late") {
-      actionType = "check_in";
-      actionable = true;
-      statusLabel = sched.timeWindow === "late" ? "Terlambat" : "Hadir";
-    } else if (sched.timeWindow === "check_out") {
-      actionType = "check_out";
-      actionable = true;
-      statusLabel = "Pulang";
+    // 1. If already completed both check-in and check-out today
+    if (hasCheckedOut) {
+      return {
+        success: true,
+        alreadyPresent: true,
+        message: `Siswa ${userProfile.fullName} (${cleanNis}) sudah menyelesaikan seluruh presensi hari ini (sudah absen pulang).`,
+        data: {
+          userName: userProfile.fullName ?? "Unknown",
+          nis: userProfile.nis ?? cleanNis,
+          className: userProfile.className ?? "-",
+          status: "Selesai",
+          date: displayDate,
+          actionType: "none",
+          actionable: false,
+        },
+      };
     }
 
+    // 2. Before check-in window
+    if (sched.timeWindow === "before_check_in") {
+      return {
+        success: true,
+        alreadyPresent: hasCheckedIn,
+        message: sched.message,
+        data: {
+          userName: userProfile.fullName ?? "Unknown",
+          nis: userProfile.nis ?? cleanNis,
+          className: userProfile.className ?? "-",
+          status: "Belum Waktunya",
+          date: displayDate,
+          actionType: "none",
+          actionable: false,
+        },
+      };
+    }
+
+    // 3. In Check-in or Late window
+    if (sched.timeWindow === "check_in" || sched.timeWindow === "late") {
+      if (hasCheckedIn) {
+        return {
+          success: true,
+          alreadyPresent: true,
+          message: `Siswa ${userProfile.fullName} (${cleanNis}) sudah melakukan presensi masuk hari ini.`,
+          data: {
+            userName: userProfile.fullName ?? "Unknown",
+            nis: userProfile.nis ?? cleanNis,
+            className: userProfile.className ?? "-",
+            status: "Sudah Masuk",
+            date: displayDate,
+            actionType: "none",
+            actionable: false,
+          },
+        };
+      }
+
+      const statusLabel = sched.timeWindow === "late" ? "Terlambat" : "Hadir";
+      return {
+        success: true,
+        alreadyPresent: false,
+        message: sched.message,
+        data: {
+          userName: userProfile.fullName ?? "Unknown",
+          nis: userProfile.nis ?? cleanNis,
+          className: userProfile.className ?? "-",
+          status: statusLabel,
+          date: displayDate,
+          actionType: "check_in",
+          actionable: true,
+        },
+      };
+    }
+
+    // 4. Between windows (Check-in window ended, before checkout window)
+    if (sched.timeWindow === "between_windows") {
+      if (hasCheckedIn) {
+        return {
+          success: true,
+          alreadyPresent: true,
+          message: `Siswa ${userProfile.fullName} (${cleanNis}) sudah presensi masuk. Presensi pulang dibuka pukul ${sched.schedule?.mulaiPulang ?? "-"}.`,
+          data: {
+            userName: userProfile.fullName ?? "Unknown",
+            nis: userProfile.nis ?? cleanNis,
+            className: userProfile.className ?? "-",
+            status: "Menunggu Pulang",
+            date: displayDate,
+            actionType: "none",
+            actionable: false,
+          },
+        };
+      }
+
+      return {
+        success: true,
+        alreadyPresent: false,
+        message: `Waktu presensi masuk telah habis. Presensi pulang dibuka pukul ${sched.schedule?.mulaiPulang ?? "-"}.`,
+        data: {
+          userName: userProfile.fullName ?? "Unknown",
+          nis: userProfile.nis ?? cleanNis,
+          className: userProfile.className ?? "-",
+          status: "Waktu Habis",
+          date: displayDate,
+          actionType: "none",
+          actionable: false,
+        },
+      };
+    }
+
+    // 5. In Checkout window
+    if (sched.timeWindow === "check_out") {
+      return {
+        success: true,
+        alreadyPresent: false,
+        message: "Waktu presensi pulang",
+        data: {
+          userName: userProfile.fullName ?? "Unknown",
+          nis: userProfile.nis ?? cleanNis,
+          className: userProfile.className ?? "-",
+          status: "Pulang",
+          date: displayDate,
+          actionType: "check_out",
+          actionable: true,
+        },
+      };
+    }
+
+    // 6. After checkout or holiday / no schedule
     return {
       success: true,
-      alreadyPresent: false,
-      message: actionable ? sched.message : "Di luar jadwal presensi aktif",
+      alreadyPresent: hasCheckedIn || hasCheckedOut,
+      message: sched.message,
       data: {
         userName: userProfile.fullName ?? "Unknown",
         nis: userProfile.nis ?? cleanNis,
         className: userProfile.className ?? "-",
-        status: statusLabel,
+        status: hasCheckedIn ? "Selesai" : "Tutup",
         date: displayDate,
-        actionType,
-        actionable,
+        actionType: "none",
+        actionable: false,
       },
     };
   } catch (error) {
@@ -392,7 +673,28 @@ export async function saveAttendance(
       };
     }
 
-    const todayStr = new Date().toISOString().split("T")[0] ?? "2026-08-28";
+    const todayStr = getWibDateStr(new Date());
+
+    // Double check to prevent race condition
+    const history = await getStudentAttendanceToday(
+      userProfile.userId,
+      todayStr,
+    );
+    if (actionType === "check_in" && history.hasCheckedIn) {
+      return {
+        success: false,
+        alreadyPresent: true,
+        message: `Siswa ${userProfile.fullName} (${cleanNis}) sudah melakukan presensi masuk hari ini.`,
+      };
+    }
+    if (actionType === "check_out" && history.hasCheckedOut) {
+      return {
+        success: false,
+        alreadyPresent: true,
+        message: `Siswa ${userProfile.fullName} (${cleanNis}) sudah menyelesaikan seluruh presensi hari ini.`,
+      };
+    }
+
     const statusLabel = actionType === "check_in" ? "Hadir" : "Pulang";
 
     const astraRes = await fetch(
@@ -478,21 +780,12 @@ export async function checkNisAndCreateAbsence(
     const { actionType, actionable } = statusResult.data ?? {};
 
     if (!actionable || actionType === "none" || !actionType) {
-      const isCompleted = statusResult.message.includes(
-        "menyelesaikan absensi",
-      );
-      const statusLabel = isCompleted
-        ? "Selesai"
-        : actionType === "check_out"
-          ? "Menunggu Pulang"
-          : "Belum Absen";
-
       return {
         success: false,
-        alreadyPresent: isCompleted,
+        alreadyPresent: statusResult.alreadyPresent ?? false,
         message: statusResult.message,
         data: statusResult.data
-          ? { ...stripActionFields(statusResult.data), status: statusLabel }
+          ? stripActionFields(statusResult.data)
           : undefined,
       };
     }
