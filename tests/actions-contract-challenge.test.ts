@@ -780,3 +780,520 @@ test("Challenge 10: Strict Schedule Time Window Calculations", () => {
   assert.equal(getWindow("20:00", sched), "after_check_out");
 });
 
+test("Challenge 11: Astra Schedule Schema Mapping & Key Fallbacks", async () => {
+  const source = await readActionsSource();
+
+  // 1. Verify schedule endpoint query in source
+  assert.match(
+    source,
+    /fetch\(\s*`\$\{astraApiUrl\(\)\}\/v1\/admin\/schedules\?day_of_week=\$\{encodeURIComponent\(day\)\}&is_active=true`/,
+    "Must query GET /v1/admin/schedules with day_of_week and is_active=true",
+  );
+
+  // 2. Schedule normalization function logic
+  interface TestAstraSchedule {
+    id?: string;
+    day_of_week?: string;
+    hari?: string;
+    start_time?: string;
+    startTime?: string;
+    end_time?: string;
+    endTime?: string;
+    start_checkout?: string;
+    startCheckout?: string;
+    end_checkout?: string;
+    endCheckout?: string;
+    mulai_masuk?: string | null;
+    mulaiMasuk?: string | null;
+    selesai_masuk?: string | null;
+    selesaiMasuk?: string | null;
+    mulai_pulang?: string | null;
+    mulaiPulang?: string | null;
+    selesai_pulang?: string | null;
+    selesaiPulang?: string | null;
+    kompensasi_waktu?: number | null;
+    kompensasiWaktu?: number | null;
+    grace_period_minutes?: number | null;
+    gracePeriodMinutes?: number | null;
+    is_active?: boolean;
+    isActive?: boolean;
+  }
+
+  const parseSchedule = (schedules: TestAstraSchedule[], day: string) => {
+    const active = schedules.find(
+      (s) =>
+        (s.day_of_week === day || s.hari === day) &&
+        s.is_active !== false &&
+        s.isActive !== false,
+    );
+    if (!active) return null;
+
+    const normalizeTime = (t?: string | null) => (t ? t.slice(0, 5) : null);
+
+    const mulaiMasuk =
+      normalizeTime(active.mulai_masuk) ||
+      normalizeTime(active.mulaiMasuk) ||
+      normalizeTime(active.start_time) ||
+      normalizeTime(active.startTime);
+    const selesaiMasuk =
+      normalizeTime(active.selesai_masuk) ||
+      normalizeTime(active.selesaiMasuk) ||
+      normalizeTime(active.end_time) ||
+      normalizeTime(active.endTime);
+    const mulaiPulang =
+      normalizeTime(active.mulai_pulang) ||
+      normalizeTime(active.mulaiPulang) ||
+      normalizeTime(active.start_checkout) ||
+      normalizeTime(active.startCheckout);
+    const selesaiPulang =
+      normalizeTime(active.selesai_pulang) ||
+      normalizeTime(active.selesaiPulang) ||
+      normalizeTime(active.end_checkout) ||
+      normalizeTime(active.endCheckout);
+
+    if (!mulaiMasuk || !selesaiMasuk) return null;
+
+    const kompensasi =
+      active.kompensasi_waktu ??
+      active.kompensasiWaktu ??
+      active.grace_period_minutes ??
+      active.gracePeriodMinutes ??
+      15;
+
+    return {
+      mulaiMasuk,
+      selesaiMasuk,
+      mulaiPulang: mulaiPulang ?? "15:30",
+      selesaiPulang: selesaiPulang ?? "17:00",
+      kompensasiWaktu: kompensasi,
+    };
+  };
+
+  // Indonesian projection keys with seconds
+  const indonesianSchedule: TestAstraSchedule[] = [
+    {
+      day_of_week: "senin",
+      mulai_masuk: "06:30:00",
+      selesai_masuk: "07:15:00",
+      mulai_pulang: "15:30:00",
+      selesai_pulang: "17:00:00",
+      kompensasi_waktu: 20,
+      is_active: true,
+    },
+  ];
+  const parsedId = parseSchedule(indonesianSchedule, "senin");
+  assert.ok(parsedId);
+  assert.equal(parsedId.mulaiMasuk, "06:30");
+  assert.equal(parsedId.selesaiMasuk, "07:15");
+  assert.equal(parsedId.mulaiPulang, "15:30");
+  assert.equal(parsedId.selesaiPulang, "17:00");
+  assert.equal(parsedId.kompensasiWaktu, 20);
+
+  // English projection keys with seconds
+  const englishSchedule: TestAstraSchedule[] = [
+    {
+      day_of_week: "senin",
+      start_time: "06:45:00",
+      end_time: "07:30:00",
+      start_checkout: "16:00:00",
+      end_checkout: "17:30:00",
+      grace_period_minutes: 10,
+      is_active: true,
+    },
+  ];
+  const parsedEn = parseSchedule(englishSchedule, "senin");
+  assert.ok(parsedEn);
+  assert.equal(parsedEn.mulaiMasuk, "06:45");
+  assert.equal(parsedEn.selesaiMasuk, "07:30");
+  assert.equal(parsedEn.mulaiPulang, "16:00");
+  assert.equal(parsedEn.selesaiPulang, "17:30");
+  assert.equal(parsedEn.kompensasiWaktu, 10);
+
+  // Inactive schedule returns null
+  const inactiveSchedule: TestAstraSchedule[] = [
+    {
+      day_of_week: "senin",
+      mulai_masuk: "06:30",
+      selesai_masuk: "07:15",
+      is_active: false,
+    },
+  ];
+  assert.equal(parseSchedule(inactiveSchedule, "senin"), null);
+
+  // Non-matching day returns null
+  assert.equal(parseSchedule(indonesianSchedule, "selasa"), null);
+});
+
+test("Challenge 12: Comprehensive Boundary Minutes & All 6 Time Windows Evaluation", () => {
+  const toMinutes = (t: string) => {
+    const [h, m] = t.split(":").map(Number);
+    return (h ?? 0) * 60 + (m ?? 0);
+  };
+
+  const evaluateTimeWindow = (
+    minuteOfDay: number,
+    s: {
+      mulaiMasuk: string;
+      selesaiMasuk: string;
+      mulaiPulang: string;
+      selesaiPulang: string;
+      kompensasiWaktu: number;
+    },
+  ) => {
+    const mins = minuteOfDay;
+    const masukStart = toMinutes(s.mulaiMasuk);
+    const masukEnd = toMinutes(s.selesaiMasuk);
+    const masukLate = masukEnd + s.kompensasiWaktu;
+    const pulangStart = toMinutes(s.mulaiPulang);
+    const pulangEnd = toMinutes(s.selesaiPulang);
+
+    if (mins < masukStart) {
+      return "before_check_in";
+    }
+    if (mins <= masukEnd) {
+      return "check_in";
+    }
+    if (mins <= masukLate) {
+      return "late";
+    }
+    if (mins < pulangStart) {
+      return "between_windows";
+    }
+    if (mins <= pulangEnd) {
+      return "check_out";
+    }
+    return "after_check_out";
+  };
+
+  // Case 1: Standard Weekday (Mon-Thu: 06:30 - 07:15, Grace: 15m, Pulang: 15:30 - 17:00)
+  const standardSched = {
+    mulaiMasuk: "06:30",
+    selesaiMasuk: "07:15",
+    mulaiPulang: "15:30",
+    selesaiPulang: "17:00",
+    kompensasiWaktu: 15,
+  };
+
+  // Boundary minutes testing
+  assert.equal(evaluateTimeWindow(0, standardSched), "before_check_in"); // 00:00
+  assert.equal(evaluateTimeWindow(389, standardSched), "before_check_in"); // 06:29
+  assert.equal(evaluateTimeWindow(390, standardSched), "check_in"); // 06:30 (Exact start)
+  assert.equal(evaluateTimeWindow(420, standardSched), "check_in"); // 07:00 (Mid check-in)
+  assert.equal(evaluateTimeWindow(435, standardSched), "check_in"); // 07:15 (Exact end)
+  assert.equal(evaluateTimeWindow(436, standardSched), "late"); // 07:16 (First late min)
+  assert.equal(evaluateTimeWindow(450, standardSched), "late"); // 07:30 (Exact grace threshold 07:15 + 15)
+  assert.equal(evaluateTimeWindow(451, standardSched), "between_windows"); // 07:31 (Window closed)
+  assert.equal(evaluateTimeWindow(720, standardSched), "between_windows"); // 12:00 (Noon)
+  assert.equal(evaluateTimeWindow(929, standardSched), "between_windows"); // 15:29 (Pre-checkout)
+  assert.equal(evaluateTimeWindow(930, standardSched), "check_out"); // 15:30 (Checkout opens)
+  assert.equal(evaluateTimeWindow(990, standardSched), "check_out"); // 16:30 (Mid checkout)
+  assert.equal(evaluateTimeWindow(1020, standardSched), "check_out"); // 17:00 (Checkout closes)
+  assert.equal(evaluateTimeWindow(1021, standardSched), "after_check_out"); // 17:01 (After checkout)
+  assert.equal(evaluateTimeWindow(1439, standardSched), "after_check_out"); // 23:59 (End of day)
+
+  // Full 1440-minute sweep for standard schedule
+  for (let m = 0; m < 1440; m++) {
+    const res = evaluateTimeWindow(m, standardSched);
+    if (m < 390) assert.equal(res, "before_check_in");
+    else if (m <= 435) assert.equal(res, "check_in");
+    else if (m <= 450) assert.equal(res, "late");
+    else if (m < 930) assert.equal(res, "between_windows");
+    else if (m <= 1020) assert.equal(res, "check_out");
+    else assert.equal(res, "after_check_out");
+  }
+
+  // Case 2: Friday Schedule (06:30 - 07:00, Grace: 15m, Pulang: 11:30 - 13:00)
+  const fridaySched = {
+    mulaiMasuk: "06:30",
+    selesaiMasuk: "07:00",
+    mulaiPulang: "11:30",
+    selesaiPulang: "13:00",
+    kompensasiWaktu: 15,
+  };
+  assert.equal(evaluateTimeWindow(389, fridaySched), "before_check_in"); // 06:29
+  assert.equal(evaluateTimeWindow(390, fridaySched), "check_in"); // 06:30
+  assert.equal(evaluateTimeWindow(420, fridaySched), "check_in"); // 07:00
+  assert.equal(evaluateTimeWindow(421, fridaySched), "late"); // 07:01
+  assert.equal(evaluateTimeWindow(435, fridaySched), "late"); // 07:15
+  assert.equal(evaluateTimeWindow(436, fridaySched), "between_windows"); // 07:16
+  assert.equal(evaluateTimeWindow(689, fridaySched), "between_windows"); // 11:29
+  assert.equal(evaluateTimeWindow(690, fridaySched), "check_out"); // 11:30
+  assert.equal(evaluateTimeWindow(780, fridaySched), "check_out"); // 13:00
+  assert.equal(evaluateTimeWindow(781, fridaySched), "after_check_out"); // 13:01
+
+  // Case 3: Zero Grace Period (kompensasiWaktu = 0)
+  const zeroGraceSched = {
+    mulaiMasuk: "07:00",
+    selesaiMasuk: "08:00",
+    mulaiPulang: "16:00",
+    selesaiPulang: "17:00",
+    kompensasiWaktu: 0,
+  };
+  assert.equal(evaluateTimeWindow(480, zeroGraceSched), "check_in"); // 08:00
+  assert.equal(evaluateTimeWindow(481, zeroGraceSched), "between_windows"); // 08:01 immediately moves to between_windows
+
+  // Case 4: Midnight-Starting Schedule (00:00 - 05:00, Grace: 30m, Pulang: 20:00 - 23:59)
+  const midnightSched = {
+    mulaiMasuk: "00:00",
+    selesaiMasuk: "05:00",
+    mulaiPulang: "20:00",
+    selesaiPulang: "23:59",
+    kompensasiWaktu: 30,
+  };
+  assert.equal(evaluateTimeWindow(0, midnightSched), "check_in"); // 00:00 opens directly
+  assert.equal(evaluateTimeWindow(300, midnightSched), "check_in"); // 05:00
+  assert.equal(evaluateTimeWindow(301, midnightSched), "late"); // 05:01
+  assert.equal(evaluateTimeWindow(330, midnightSched), "late"); // 05:30
+  assert.equal(evaluateTimeWindow(331, midnightSched), "between_windows"); // 05:31
+  assert.equal(evaluateTimeWindow(1199, midnightSched), "between_windows"); // 19:59
+  assert.equal(evaluateTimeWindow(1200, midnightSched), "check_out"); // 20:00
+  assert.equal(evaluateTimeWindow(1439, midnightSched), "check_out"); // 23:59 stays open until day ends
+});
+
+test("Challenge 13: Exhaustive Key Fallback & Projection Matrix", () => {
+  interface MultiKeySchedule {
+    id?: string;
+    day_of_week?: string;
+    hari?: string;
+    start_time?: string;
+    startTime?: string;
+    end_time?: string;
+    endTime?: string;
+    start_checkout?: string;
+    startCheckout?: string;
+    end_checkout?: string;
+    endCheckout?: string;
+    mulai_masuk?: string | null;
+    mulaiMasuk?: string | null;
+    selesai_masuk?: string | null;
+    selesaiMasuk?: string | null;
+    mulai_pulang?: string | null;
+    mulaiPulang?: string | null;
+    selesai_pulang?: string | null;
+    selesaiPulang?: string | null;
+    kompensasi_waktu?: number | null;
+    kompensasiWaktu?: number | null;
+    grace_period_minutes?: number | null;
+    gracePeriodMinutes?: number | null;
+    is_active?: boolean;
+    isActive?: boolean;
+  }
+
+  const parseScheduleMatrix = (schedules: MultiKeySchedule[], day: string) => {
+    const active = schedules.find(
+      (s) =>
+        (s.day_of_week === day || s.hari === day) &&
+        s.is_active !== false &&
+        s.isActive !== false,
+    );
+    if (!active) return null;
+
+    const normalizeTime = (t?: string | null) => (t ? t.slice(0, 5) : null);
+
+    const mulaiMasuk =
+      normalizeTime(active.mulai_masuk) ||
+      normalizeTime(active.mulaiMasuk) ||
+      normalizeTime(active.start_time) ||
+      normalizeTime(active.startTime);
+    const selesaiMasuk =
+      normalizeTime(active.selesai_masuk) ||
+      normalizeTime(active.selesaiMasuk) ||
+      normalizeTime(active.end_time) ||
+      normalizeTime(active.endTime);
+    const mulaiPulang =
+      normalizeTime(active.mulai_pulang) ||
+      normalizeTime(active.mulaiPulang) ||
+      normalizeTime(active.start_checkout) ||
+      normalizeTime(active.startCheckout);
+    const selesaiPulang =
+      normalizeTime(active.selesai_pulang) ||
+      normalizeTime(active.selesaiPulang) ||
+      normalizeTime(active.end_checkout) ||
+      normalizeTime(active.endCheckout);
+
+    if (!mulaiMasuk || !selesaiMasuk) return null;
+
+    const kompensasi =
+      active.kompensasi_waktu ??
+      active.kompensasiWaktu ??
+      active.grace_period_minutes ??
+      active.gracePeriodMinutes ??
+      15;
+
+    return {
+      mulaiMasuk,
+      selesaiMasuk,
+      mulaiPulang: mulaiPulang ?? "15:30",
+      selesaiPulang: selesaiPulang ?? "17:00",
+      kompensasiWaktu: kompensasi,
+    };
+  };
+
+  // 1. Indonesian snake_case
+  const p1 = parseScheduleMatrix(
+    [
+      {
+        day_of_week: "rabu",
+        mulai_masuk: "06:30:00",
+        selesai_masuk: "07:15:00",
+        mulai_pulang: "15:30:00",
+        selesai_pulang: "17:00:00",
+        kompensasi_waktu: 25,
+        is_active: true,
+      },
+    ],
+    "rabu",
+  );
+  assert.deepEqual(p1, {
+    mulaiMasuk: "06:30",
+    selesaiMasuk: "07:15",
+    mulaiPulang: "15:30",
+    selesaiPulang: "17:00",
+    kompensasiWaktu: 25,
+  });
+
+  // 2. Indonesian camelCase
+  const p2 = parseScheduleMatrix(
+    [
+      {
+        hari: "kamis",
+        mulaiMasuk: "06:45",
+        selesaiMasuk: "07:30",
+        mulaiPulang: "16:00",
+        selesaiPulang: "17:30",
+        kompensasiWaktu: 30,
+        isActive: true,
+      },
+    ],
+    "kamis",
+  );
+  assert.deepEqual(p2, {
+    mulaiMasuk: "06:45",
+    selesaiMasuk: "07:30",
+    mulaiPulang: "16:00",
+    selesaiPulang: "17:30",
+    kompensasiWaktu: 30,
+  });
+
+  // 3. English snake_case
+  const p3 = parseScheduleMatrix(
+    [
+      {
+        day_of_week: "jumat",
+        start_time: "06:30:00",
+        end_time: "07:00:00",
+        start_checkout: "11:30:00",
+        end_checkout: "13:00:00",
+        grace_period_minutes: 10,
+        is_active: true,
+      },
+    ],
+    "jumat",
+  );
+  assert.deepEqual(p3, {
+    mulaiMasuk: "06:30",
+    selesaiMasuk: "07:00",
+    mulaiPulang: "11:30",
+    selesaiPulang: "13:00",
+    kompensasiWaktu: 10,
+  });
+
+  // 4. English camelCase
+  const p4 = parseScheduleMatrix(
+    [
+      {
+        day_of_week: "sabtu",
+        startTime: "06:00",
+        endTime: "23:59",
+        startCheckout: "11:00",
+        endCheckout: "23:59",
+        gracePeriodMinutes: 60,
+        isActive: true,
+      },
+    ],
+    "sabtu",
+  );
+  assert.deepEqual(p4, {
+    mulaiMasuk: "06:00",
+    selesaiMasuk: "23:59",
+    mulaiPulang: "11:00",
+    selesaiPulang: "23:59",
+    kompensasiWaktu: 60,
+  });
+
+  // 5. Hybrid / Mixed keys
+  const p5 = parseScheduleMatrix(
+    [
+      {
+        hari: "senin",
+        start_time: "06:20",
+        selesaiMasuk: "07:10",
+        startCheckout: "15:00",
+        selesai_pulang: "16:30",
+        grace_period_minutes: 12,
+        is_active: true,
+      },
+    ],
+    "senin",
+  );
+  assert.deepEqual(p5, {
+    mulaiMasuk: "06:20",
+    selesaiMasuk: "07:10",
+    mulaiPulang: "15:00",
+    selesaiPulang: "16:30",
+    kompensasiWaktu: 12,
+  });
+
+  // 6. Default fallbacks when checkout or grace are omitted
+  const p6 = parseScheduleMatrix(
+    [
+      {
+        day_of_week: "senin",
+        mulai_masuk: "06:30",
+        selesai_masuk: "07:15",
+        is_active: true,
+      },
+    ],
+    "senin",
+  );
+  assert.deepEqual(p6, {
+    mulaiMasuk: "06:30",
+    selesaiMasuk: "07:15",
+    mulaiPulang: "15:30", // Default
+    selesaiPulang: "17:00", // Default
+    kompensasiWaktu: 15, // Default
+  });
+
+  // 7. Missing check-in times returns null
+  assert.equal(
+    parseScheduleMatrix(
+      [
+        {
+          day_of_week: "senin",
+          mulai_pulang: "15:30",
+          selesai_pulang: "17:00",
+          is_active: true,
+        },
+      ],
+      "senin",
+    ),
+    null,
+  );
+
+  // 8. Inactive schedule returns null
+  assert.equal(
+    parseScheduleMatrix(
+      [
+        {
+          day_of_week: "senin",
+          mulai_masuk: "06:30",
+          selesai_masuk: "07:15",
+          is_active: true,
+          isActive: false, // Explicitly false in one of the fields
+        },
+      ],
+      "senin",
+    ),
+    null,
+  );
+});

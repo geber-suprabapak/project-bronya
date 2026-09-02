@@ -471,13 +471,14 @@ export async function checkScheduleStatus(): Promise<ScheduleStatus> {
     }
 
     const astraSched = await fetchActiveScheduleFromAstra(day);
-    const schedDef = astraSched ?? DEFAULT_SCHEDULES[day] ?? {
-      mulaiMasuk: "06:30",
-      selesaiMasuk: "07:15",
-      mulaiPulang: "15:30",
-      selesaiPulang: "17:00",
-      kompensasiWaktu: 15,
-    };
+    const schedDef = astraSched ??
+      DEFAULT_SCHEDULES[day] ?? {
+        mulaiMasuk: "06:30",
+        selesaiMasuk: "07:15",
+        mulaiPulang: "15:30",
+        selesaiPulang: "17:00",
+        kompensasiWaktu: 15,
+      };
 
     const s = {
       hari: day,
