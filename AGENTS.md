@@ -1,4 +1,11 @@
 <!-- repo-map:start -->
+## Development and verification
+
+This is a pnpm-managed Next.js application. Use `pnpm dev` for local development,
+`pnpm build` for a production build, `pnpm lint` for static checks, and `pnpm test`
+for the Node test suite. Use the scripts in `package.json` as the source of truth
+when adding or changing commands.
+
 ## Codebase semantic map
 
 Start repository-wide orientation at `docs/codebase-map/README.md`.
