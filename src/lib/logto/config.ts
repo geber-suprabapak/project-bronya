@@ -43,7 +43,11 @@ export const logtoConfig: LogtoNextConfig = {
   cookieSecret:
     env.LOGTO_COOKIE_SECRET ??
     "bronya-dev-cookie-secret-not-for-production-only",
-  cookieSecure: env.NODE_ENV === "production",
+  // Produksi tetap default Secure; staging k8s over HTTP menonaktifkannya
+  // eksplisit via LOGTO_COOKIE_SECURE=false.
+  cookieSecure:
+    env.NODE_ENV === "production" &&
+    process.env.LOGTO_COOKIE_SECURE !== "false",
   scopes: [...BRONYA_LOGTO_SCOPES],
   resources: env.LOGTO_RESOURCE ? [env.LOGTO_RESOURCE] : undefined,
 };
