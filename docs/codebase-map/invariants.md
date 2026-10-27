@@ -14,3 +14,13 @@
 
 **Rule:** An Astra error is not presented as a successful attendance action.
 **Evidence:** `README.md`, `tests/actions-contract-challenge.test.ts`.
+
+## INV-BRONYA-004 — Kiosk result timestamps use the school timezone
+
+**Rule:** Check-in and repeated-scan results format the display date in Asia/Jakarta regardless of the server timezone, matching the WIB attendance day.
+**Evidence:** `src/app/(main)/presensi/actions.ts`.
+
+## INV-BRONYA-005 — Local runtime environments stay outside Docker builds
+
+**Rule:** Docker build context excludes local environment files, dependencies and build output. Runtime credentials come from deployment configuration.
+**Evidence:** `.dockerignore`, `Dockerfile`.

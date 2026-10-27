@@ -23,6 +23,7 @@ export type AbsenceResult = {
 
 const formatDisplayDate = (date: Date) =>
   date.toLocaleDateString("id-ID", {
+    timeZone: "Asia/Jakarta",
     weekday: "long",
     year: "numeric",
     month: "long",
