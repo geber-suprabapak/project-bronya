@@ -546,6 +546,13 @@ export async function checkAttendanceStatus(
       };
     }
 
+    if (!userProfile.userId.trim()) {
+      return {
+        success: false,
+        message: "Akun siswa belum terhubung. Hubungi admin sekolah.",
+      };
+    }
+
     const todayStr = getWibDateStr(new Date());
     const [sched, history] = await Promise.all([
       checkScheduleStatus(),
@@ -719,6 +726,13 @@ export async function saveAttendance(
       return {
         success: false,
         message: `NIS "${cleanNis}" tidak ditemukan dalam sistem`,
+      };
+    }
+
+    if (!userProfile.userId.trim()) {
+      return {
+        success: false,
+        message: "Akun siswa belum terhubung. Hubungi admin sekolah.",
       };
     }
 

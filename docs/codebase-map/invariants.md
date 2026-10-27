@@ -24,3 +24,8 @@
 
 **Rule:** Docker build context excludes local environment files, dependencies and build output. Runtime credentials come from deployment configuration.
 **Evidence:** `.dockerignore`, `Dockerfile`.
+
+## INV-BRONYA-006 — Roster identity is resolved before attendance reads
+
+**Rule:** A roster row without a nonblank User ID returns an account-linking error before querying attendance or attempting a write. It cannot inherit another student's history through an empty user filter. Both the check and direct save server actions enforce this boundary.
+**Evidence:** `src/app/(main)/presensi/actions.ts`, `tests/kiosk-identity-actions.test.ts`.
