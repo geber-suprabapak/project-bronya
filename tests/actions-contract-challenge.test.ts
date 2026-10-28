@@ -164,7 +164,7 @@ test("Challenge 3: Contract Conformance - createManualAttendanceSchema Status & 
     const payload = {
       user_id: sampleUserId,
       action_type: "check_in" as const,
-      status: status as unknown as "Hadir",
+      status,
       reason: "Kiosk terminal scan",
     };
     const res = createManualAttendanceSchema.safeParse(payload);
@@ -291,11 +291,7 @@ test("Challenge 4: Student Lookup - NIS Sanitization, Exact Matching & Field Map
     rawNis: string,
   ) => {
     const cleanNis = sanitizeNis(rawNis);
-    const students = Array.isArray((data as { data?: MockStudent[] }).data)
-      ? (data as { data: MockStudent[] }).data
-      : Array.isArray(data)
-        ? data
-        : [];
+    const students = Array.isArray(data) ? data : (data.data ?? []);
 
     const student = students.find((s) => s.nis === cleanNis);
     if (!student) return null;
@@ -402,16 +398,23 @@ test("Challenge 6: Astra Response Envelope Variations & Fallbacks", () => {
     return clean.replace(/\D/g, "");
   };
 
+  type MockStudentsPayload =
+    | MockStudent[]
+    | {
+        data?: MockStudent[] | null | string | object;
+        success?: boolean;
+        message?: string;
+      };
+
   const resolveStudentFromPayload = (
-    data: { data?: MockStudent[] } | MockStudent[] | unknown,
+    data: MockStudentsPayload,
     rawNis: string,
   ) => {
     const cleanNis = sanitizeNis(rawNis);
-    const parsed = data as { data?: MockStudent[] };
-    const students: MockStudent[] = Array.isArray(parsed?.data)
-      ? (parsed.data as MockStudent[])
-      : Array.isArray(data)
-        ? (data as MockStudent[])
+    const students = Array.isArray(data)
+      ? data
+      : Array.isArray(data.data)
+        ? data.data
         : [];
 
     const student = students.find((s) => s?.nis === cleanNis);
@@ -489,7 +492,7 @@ test("Challenge 7: Schedule Status & Time Window Computations", () => {
     kompensasiWaktu: number;
   }
 
-  const DEFAULT_SCHEDULES: Record<string, ScheduleConfig> = {
+  const DEFAULT_SCHEDULES = {
     senin: {
       mulaiMasuk: "06:30",
       selesaiMasuk: "07:15",
@@ -518,7 +521,7 @@ test("Challenge 7: Schedule Status & Time Window Computations", () => {
       selesaiPulang: "23:59",
       kompensasiWaktu: 60,
     },
-  };
+  } satisfies Record<string, ScheduleConfig>;
 
   const toMinutes = (t: string) => {
     const [h, m] = t.split(":").map(Number);

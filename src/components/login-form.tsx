@@ -16,6 +16,8 @@ const ERROR_MESSAGES = {
   unauthorized: "Sesi Logto tidak valid atau telah berakhir.",
   session_unavailable: "Sesi Logto tidak tersedia. Silakan coba lagi.",
 } as const;
+const isErrorCode = (value: string): value is keyof typeof ERROR_MESSAGES =>
+  Object.hasOwn(ERROR_MESSAGES, value);
 
 export function LoginForm({
   className,
@@ -26,8 +28,8 @@ export function LoginForm({
 
   React.useEffect(() => {
     const errorCode = new URLSearchParams(window.location.search).get("error");
-    if (errorCode && errorCode in ERROR_MESSAGES) {
-      setError(ERROR_MESSAGES[errorCode as keyof typeof ERROR_MESSAGES]);
+    if (errorCode && isErrorCode(errorCode)) {
+      setError(ERROR_MESSAGES[errorCode]);
     }
   }, []);
 

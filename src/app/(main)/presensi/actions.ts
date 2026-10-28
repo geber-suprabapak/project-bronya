@@ -1,6 +1,7 @@
 "use server";
 
 import { getAccessToken } from "@logto/next/server-actions";
+import { z } from "zod";
 import { env } from "~/env";
 import { logtoConfig } from "~/lib/logto/config";
 
@@ -59,18 +60,19 @@ export type ScheduleTimeWindow =
   | "outside"
   | "no_schedule";
 
+type ScheduleConfig = {
+  mulaiMasuk: string;
+  selesaiMasuk: string;
+  mulaiPulang: string;
+  selesaiPulang: string;
+  kompensasiWaktu: number;
+};
+
 export type ScheduleStatus = {
   success: boolean;
   timeWindow: ScheduleTimeWindow;
   message: string;
-  schedule?: {
-    hari: string;
-    mulaiMasuk: string;
-    selesaiMasuk: string;
-    mulaiPulang: string;
-    selesaiPulang: string;
-    kompensasiWaktu: number;
-  };
+  schedule?: ScheduleConfig & { hari: string };
 };
 
 const DAYS_ID = [
@@ -81,18 +83,11 @@ const DAYS_ID = [
   "kamis",
   "jumat",
   "sabtu",
-];
+] as const;
 
-const DEFAULT_SCHEDULES: Record<
-  string,
-  {
-    mulaiMasuk: string;
-    selesaiMasuk: string;
-    mulaiPulang: string;
-    selesaiPulang: string;
-    kompensasiWaktu: number;
-  }
-> = {
+type DefaultScheduleDay = Exclude<(typeof DAYS_ID)[number], "minggu">;
+
+const DEFAULT_SCHEDULES = {
   senin: {
     mulaiMasuk: "06:30",
     selesaiMasuk: "07:15",
@@ -135,88 +130,105 @@ const DEFAULT_SCHEDULES: Record<
     selesaiPulang: "23:59",
     kompensasiWaktu: 60,
   },
-};
+} satisfies Record<DefaultScheduleDay, ScheduleConfig>;
 
 const toMinutes = (t: string) => {
   const [h, m] = t.split(":").map(Number);
   return (h ?? 0) * 60 + (m ?? 0);
 };
 
-interface AstraStudent {
-  id?: string;
-  user_id?: string;
-  userId?: string;
-  nis?: string;
-  full_name?: string;
-  fullName?: string;
-  class_name?: string;
-  className?: string;
-  avatar_url?: string;
-  avatarUrl?: string;
-  email?: string;
-  absence_number?: string;
-  absenceNumber?: string;
-  gender?: string;
-  role?: string;
-  lifecycle_status?: string;
-}
+const optionalText = z.string().nullish();
+const AstraStudentSchema = z
+  .object({
+    id: optionalText,
+    user_id: optionalText,
+    userId: optionalText,
+    nis: optionalText,
+    full_name: optionalText,
+    fullName: optionalText,
+    class_name: optionalText,
+    className: optionalText,
+    avatar_url: optionalText,
+    avatarUrl: optionalText,
+    email: optionalText,
+    absence_number: optionalText,
+    absenceNumber: optionalText,
+    gender: optionalText,
+    role: optionalText,
+    lifecycle_status: optionalText,
+  })
+  .passthrough();
+const AstraAttendanceSchema = z
+  .object({
+    id: optionalText,
+    user_id: optionalText,
+    userId: optionalText,
+    date: optionalText,
+    status: optionalText,
+    action_type: optionalText,
+    actionType: optionalText,
+    created_at: optionalText,
+  })
+  .passthrough();
+const AstraScheduleSchema = z
+  .object({
+    id: optionalText,
+    day_of_week: optionalText,
+    hari: optionalText,
+    start_time: optionalText,
+    startTime: optionalText,
+    end_time: optionalText,
+    endTime: optionalText,
+    start_checkout: optionalText,
+    startCheckout: optionalText,
+    end_checkout: optionalText,
+    endCheckout: optionalText,
+    mulai_masuk: optionalText,
+    mulaiMasuk: optionalText,
+    selesai_masuk: optionalText,
+    selesaiMasuk: optionalText,
+    mulai_pulang: optionalText,
+    mulaiPulang: optionalText,
+    selesai_pulang: optionalText,
+    selesaiPulang: optionalText,
+    kompensasi_waktu: z.number().nullish(),
+    kompensasiWaktu: z.number().nullish(),
+    grace_period_minutes: z.number().nullish(),
+    gracePeriodMinutes: z.number().nullish(),
+    is_active: z.boolean().nullish(),
+    isActive: z.boolean().nullish(),
+  })
+  .passthrough();
+const AstraStudentsResponseSchema = z.union([
+  z.object({ data: z.array(AstraStudentSchema) }).passthrough(),
+  z.array(AstraStudentSchema),
+]);
+const AstraAttendanceResponseSchema = z.union([
+  z.object({ data: z.array(AstraAttendanceSchema) }).passthrough(),
+  z.array(AstraAttendanceSchema),
+]);
+const AstraSchedulesResponseSchema = z.union([
+  z.object({ data: z.array(AstraScheduleSchema) }).passthrough(),
+  z.array(AstraScheduleSchema),
+]);
+type AstraAttendance = z.infer<typeof AstraAttendanceSchema>;
+type StudentAttendanceHistory =
+  | {
+      available: true;
+      hasCheckedIn: boolean;
+      hasCheckedOut: boolean;
+      checkInRecord?: AstraAttendance;
+      checkOutRecord?: AstraAttendance;
+    }
+  | { available: false; hasCheckedIn: false; hasCheckedOut: false };
 
-interface AstraStudentsResponse {
-  success?: boolean;
-  message?: string;
-  data?: AstraStudent[];
-}
-
-interface AstraAttendance {
-  id?: string;
-  user_id?: string;
-  userId?: string;
-  date?: string;
-  status?: string;
-  action_type?: string;
-  actionType?: string;
-  created_at?: string;
-}
-
-interface AstraAttendanceResponse {
-  success?: boolean;
-  message?: string;
-  data?: AstraAttendance[];
-}
-
-interface AstraSchedule {
-  id?: string;
-  day_of_week?: string;
-  hari?: string;
-  start_time?: string;
-  startTime?: string;
-  end_time?: string;
-  endTime?: string;
-  start_checkout?: string;
-  startCheckout?: string;
-  end_checkout?: string;
-  endCheckout?: string;
-  mulai_masuk?: string | null;
-  mulaiMasuk?: string | null;
-  selesai_masuk?: string | null;
-  selesaiMasuk?: string | null;
-  mulai_pulang?: string | null;
-  mulaiPulang?: string | null;
-  selesai_pulang?: string | null;
-  selesaiPulang?: string | null;
-  kompensasi_waktu?: number | null;
-  kompensasiWaktu?: number | null;
-  grace_period_minutes?: number | null;
-  gracePeriodMinutes?: number | null;
-  is_active?: boolean;
-  isActive?: boolean;
-}
-
-interface AstraSchedulesResponse {
-  success?: boolean;
-  message?: string;
-  data?: AstraSchedule[];
-}
+const ATTENDANCE_HISTORY_UNAVAILABLE: StudentAttendanceHistory = {
+  available: false,
+  hasCheckedIn: false,
+  hasCheckedOut: false,
+};
+const ATTENDANCE_HISTORY_ERROR =
+  "Tidak dapat memeriksa riwayat presensi. Silakan coba lagi.";
 
 const astraApiUrl = (): string => {
   if (!env.ASTRA_API_URL) {
@@ -235,35 +247,33 @@ const getAstraTokenDiagnostics = (headers: Record<string, string>) => {
   }
 
   try {
-    const payload = JSON.parse(
-      Buffer.from(payloadSegment, "base64url").toString("utf8"),
-    ) as {
-      iss?: unknown;
-      aud?: unknown;
-      scope?: unknown;
-      exp?: unknown;
-    };
+    const parsedPayload = z
+      .object({
+        iss: z.string().optional(),
+        aud: z.union([z.string(), z.array(z.string())]).optional(),
+        scope: z.string().optional(),
+        exp: z.number().optional(),
+      })
+      .passthrough()
+      .safeParse(
+        JSON.parse(Buffer.from(payloadSegment, "base64url").toString("utf8")),
+      );
+    if (!parsedPayload.success) return { format: "malformed-jwt" };
+
+    const payload = parsedPayload.data;
     const audience = Array.isArray(payload.aud)
-      ? payload.aud.filter(
-          (value): value is string => typeof value === "string",
-        )
-      : typeof payload.aud === "string"
+      ? payload.aud
+      : payload.aud
         ? [payload.aud]
         : [];
-    const scopes =
-      typeof payload.scope === "string"
-        ? payload.scope.split(" ").filter(Boolean)
-        : [];
+    const scopes = payload.scope?.split(" ").filter(Boolean) ?? [];
 
     return {
       format: "jwt",
-      issuer: typeof payload.iss === "string" ? payload.iss : null,
+      issuer: payload.iss ?? null,
       audience,
       scopes,
-      expired:
-        typeof payload.exp === "number"
-          ? payload.exp <= Date.now() / 1000
-          : null,
+      expired: payload.exp == null ? null : payload.exp <= Date.now() / 1000,
     };
   } catch {
     return { format: "malformed-jwt" };
@@ -299,12 +309,11 @@ const findUserByNis = async (nis: string) => {
     throw new Error(`Astra student lookup failed with HTTP ${res.status}`);
   }
 
-  const data = (await res.json()) as AstraStudentsResponse;
-  const students = Array.isArray(data.data)
-    ? data.data
-    : Array.isArray(data)
-      ? (data as AstraStudent[])
-      : [];
+  const parsed = AstraStudentsResponseSchema.safeParse(await res.json());
+  if (!parsed.success) {
+    throw new Error("Astra returned an invalid student response");
+  }
+  const students = Array.isArray(parsed.data) ? parsed.data : parsed.data.data;
 
   const student = students.find((s) => s.nis === cleanNis);
   if (!student) return null;
@@ -328,12 +337,7 @@ const findUserByNis = async (nis: string) => {
 const getStudentAttendanceToday = async (
   userId: string,
   dateStr: string,
-): Promise<{
-  hasCheckedIn: boolean;
-  hasCheckedOut: boolean;
-  checkInRecord?: AstraAttendance;
-  checkOutRecord?: AstraAttendance;
-}> => {
+): Promise<StudentAttendanceHistory> => {
   try {
     const headers = await astraHeaders();
     const res = await fetch(
@@ -343,15 +347,12 @@ const getStudentAttendanceToday = async (
         signal: AbortSignal.timeout(3000),
       },
     );
-    if (!res.ok) {
-      return { hasCheckedIn: false, hasCheckedOut: false };
+    if (!res.ok) return ATTENDANCE_HISTORY_UNAVAILABLE;
+    const parsed = AstraAttendanceResponseSchema.safeParse(await res.json());
+    if (!parsed.success) {
+      throw new Error("Astra returned an invalid attendance response");
     }
-    const data = (await res.json()) as AstraAttendanceResponse;
-    const records = Array.isArray(data.data)
-      ? data.data
-      : Array.isArray(data)
-        ? (data as AstraAttendance[])
-        : [];
+    const records = Array.isArray(parsed.data) ? parsed.data : parsed.data.data;
 
     const checkInRecord = records.find(
       (r) =>
@@ -368,6 +369,7 @@ const getStudentAttendanceToday = async (
     );
 
     return {
+      available: true,
       hasCheckedIn: Boolean(checkInRecord),
       hasCheckedOut: Boolean(checkOutRecord),
       checkInRecord,
@@ -375,19 +377,13 @@ const getStudentAttendanceToday = async (
     };
   } catch (error) {
     console.error("Error fetching student attendance history:", error);
-    return { hasCheckedIn: false, hasCheckedOut: false };
+    return ATTENDANCE_HISTORY_UNAVAILABLE;
   }
 };
 
 const fetchActiveScheduleFromAstra = async (
   day: string,
-): Promise<{
-  mulaiMasuk: string;
-  selesaiMasuk: string;
-  mulaiPulang: string;
-  selesaiPulang: string;
-  kompensasiWaktu: number;
-} | null> => {
+): Promise<ScheduleConfig | null> => {
   try {
     const headers = await astraHeaders();
     const res = await fetch(
@@ -398,12 +394,11 @@ const fetchActiveScheduleFromAstra = async (
       },
     );
     if (!res.ok) return null;
-    const data = (await res.json()) as AstraSchedulesResponse;
-    const schedules = Array.isArray(data.data)
-      ? data.data
-      : Array.isArray(data)
-        ? (data as AstraSchedule[])
-        : [];
+    const parsed = AstraSchedulesResponseSchema.safeParse(await res.json());
+    if (!parsed.success) return null;
+    const schedules = Array.isArray(parsed.data)
+      ? parsed.data
+      : parsed.data.data;
     const active = schedules.find(
       (s) =>
         (s.day_of_week === day || s.hari === day) &&
@@ -473,7 +468,7 @@ export async function checkScheduleStatus(): Promise<ScheduleStatus> {
 
     const astraSched = await fetchActiveScheduleFromAstra(day);
     const schedDef = astraSched ??
-      DEFAULT_SCHEDULES[day] ?? {
+      (day === "minggu" ? undefined : DEFAULT_SCHEDULES[day]) ?? {
         mulaiMasuk: "06:30",
         selesaiMasuk: "07:15",
         mulaiPulang: "15:30",
@@ -521,7 +516,7 @@ export async function checkScheduleStatus(): Promise<ScheduleStatus> {
     }
 
     return { success: true, timeWindow: tw, message: msg, schedule: s };
-  } catch (_error) {
+  } catch {
     return {
       success: false,
       timeWindow: "outside",
@@ -558,6 +553,9 @@ export async function checkAttendanceStatus(
       checkScheduleStatus(),
       getStudentAttendanceToday(userProfile.userId, todayStr),
     ]);
+    if (!history.available) {
+      return { success: false, message: ATTENDANCE_HISTORY_ERROR };
+    }
 
     const displayDate = formatDisplayDate(new Date());
     const { hasCheckedIn, hasCheckedOut } = history;
@@ -743,6 +741,9 @@ export async function saveAttendance(
       userProfile.userId,
       todayStr,
     );
+    if (!history.available) {
+      return { success: false, message: ATTENDANCE_HISTORY_ERROR };
+    }
     if (actionType === "check_in" && history.hasCheckedIn) {
       return {
         success: false,

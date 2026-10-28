@@ -47,5 +47,5 @@ export function isKioskOperatorRole(
 export function extractExtendedClaims(
   claims: IdTokenClaims | null | undefined,
 ): ExtendedLogtoClaims | null {
-  return claims ? (claims as ExtendedLogtoClaims) : null;
+  return claims ?? null;
 }

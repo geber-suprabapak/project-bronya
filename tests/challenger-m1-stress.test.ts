@@ -400,7 +400,7 @@ test("Challenger Stress Test 4: Schema Validation on Astra Contract Requirements
   assert.equal(astraAttendanceSchema.safeParse(badDate).success, false);
 
   // Invalid status -> failure
-  const badStatus = { ...baseValid, status: "Present" as unknown as "Hadir" };
+  const badStatus = { ...baseValid, status: "Present" };
   assert.equal(astraAttendanceSchema.safeParse(badStatus).success, false);
 });
 

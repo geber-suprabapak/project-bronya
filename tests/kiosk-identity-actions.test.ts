@@ -16,6 +16,17 @@ const unboundStudent = {
 
 function mockAstra(
   student: typeof unboundStudent | { user_id: string; nis: string },
+  attendanceResponse: () => Response = () =>
+    Response.json({
+      success: true,
+      data: [
+        {
+          user_id: "bound-user",
+          action_type: "check_in",
+          status: "Hadir",
+        },
+      ],
+    }),
 ) {
   const original = globalThis.fetch;
   const paths: string[] = [];
@@ -26,16 +37,7 @@ function mockAstra(
       return Response.json({ success: true, data: [student] });
     }
     if (url.pathname === "/v1/admin/attendance") {
-      return Response.json({
-        success: true,
-        data: [
-          {
-            user_id: url.searchParams.get("userId") || "another-student",
-            action_type: "check_in",
-            status: "Hadir",
-          },
-        ],
-      });
+      return attendanceResponse();
     }
     if (url.pathname === "/v1/admin/schedules") {
       return Response.json({
@@ -114,5 +116,44 @@ test("bound barcode remains a duplicate and displays the WIB day on a UTC server
     astra.restore();
     if (originalTimezone === undefined) delete process.env.TZ;
     else process.env.TZ = originalTimezone;
+  }
+});
+
+test("attendance reads fail closed when Astra history is unavailable or malformed", async () => {
+  const invalidResponses = [
+    () => new Response(null, { status: 503 }),
+    () => Response.json({ success: true, data: "malformed" }),
+  ];
+
+  for (const attendanceResponse of invalidResponses) {
+    const statusAstra = mockAstra(
+      { user_id: "bound-user", nis: "24003" },
+      attendanceResponse,
+    );
+    try {
+      const result = await checkAttendanceStatus("24003", 0, 0);
+      assert.equal(result.success, false);
+      assert.equal(result.data, undefined);
+      assert.match(result.message, /riwayat presensi/);
+    } finally {
+      statusAstra.restore();
+    }
+
+    const saveAstra = mockAstra(
+      { user_id: "bound-user", nis: "24003" },
+      attendanceResponse,
+    );
+    try {
+      const result = await saveAttendance("24003", "check_in", 0, 0);
+      assert.equal(result.success, false);
+      assert.match(result.message, /riwayat presensi/);
+      assert(
+        !saveAstra.paths.some((path) =>
+          path.startsWith("/v1/admin/attendance/manual"),
+        ),
+      );
+    } finally {
+      saveAstra.restore();
+    }
   }
 });
