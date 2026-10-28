@@ -44,10 +44,7 @@
   },
   "overrides": [
     {
-      "includes": [
-        "**/*.md",
-        "*.md"
-      ],
+      "includes": ["**/*.md", "*.md"],
       "formatter": {
         "enabled": false
       }
