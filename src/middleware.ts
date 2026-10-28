@@ -14,6 +14,7 @@ function isPublicPath(pathname: string): boolean {
   return (
     pathname === "/login" ||
     pathname === "/api/health" ||
+    pathname === "/api/health/live" ||
     pathname.startsWith("/api/logto/") ||
     pathname.startsWith("/_next/") ||
     pathname === "/favicon.ico" ||
