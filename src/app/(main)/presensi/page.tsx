@@ -162,7 +162,7 @@ export default function IndexPage() {
       if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
       debounceTimerRef.current = setTimeout(() => {
         processAbsence(value);
-      }, 50);
+      }, 120);
     }
   };
 

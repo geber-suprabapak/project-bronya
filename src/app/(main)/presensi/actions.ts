@@ -381,9 +381,14 @@ const getStudentAttendanceToday = async (
   }
 };
 
+type AstraScheduleLookupResult =
+  | { status: "active"; schedule: ScheduleConfig }
+  | { status: "inactive" }
+  | { status: "fallback" };
+
 const fetchActiveScheduleFromAstra = async (
   day: string,
-): Promise<ScheduleConfig | null> => {
+): Promise<AstraScheduleLookupResult> => {
   try {
     const headers = await astraHeaders();
     const res = await fetch(
@@ -393,19 +398,21 @@ const fetchActiveScheduleFromAstra = async (
         signal: AbortSignal.timeout(3000),
       },
     );
-    if (!res.ok) return null;
+    if (!res.ok) return { status: "fallback" };
     const parsed = AstraSchedulesResponseSchema.safeParse(await res.json());
-    if (!parsed.success) return null;
+    if (!parsed.success) return { status: "fallback" };
     const schedules = Array.isArray(parsed.data)
       ? parsed.data
       : parsed.data.data;
+    if (schedules.length === 0) return { status: "fallback" };
+
     const active = schedules.find(
       (s) =>
         (s.day_of_week === day || s.hari === day) &&
         s.is_active !== false &&
         s.isActive !== false,
     );
-    if (!active) return null;
+    if (!active) return { status: "inactive" };
 
     const normalizeTime = (t?: string | null) => (t ? t.slice(0, 5) : null);
 
@@ -430,7 +437,7 @@ const fetchActiveScheduleFromAstra = async (
       normalizeTime(active.end_checkout) ||
       normalizeTime(active.endCheckout);
 
-    if (!mulaiMasuk || !selesaiMasuk) return null;
+    if (!mulaiMasuk || !selesaiMasuk) return { status: "fallback" };
 
     const kompensasi =
       active.kompensasi_waktu ??
@@ -440,14 +447,17 @@ const fetchActiveScheduleFromAstra = async (
       15;
 
     return {
-      mulaiMasuk,
-      selesaiMasuk,
-      mulaiPulang: mulaiPulang ?? "15:30",
-      selesaiPulang: selesaiPulang ?? "17:00",
-      kompensasiWaktu: kompensasi,
+      status: "active",
+      schedule: {
+        mulaiMasuk,
+        selesaiMasuk,
+        mulaiPulang: mulaiPulang ?? "15:30",
+        selesaiPulang: selesaiPulang ?? "17:00",
+        kompensasiWaktu: kompensasi,
+      },
     };
   } catch {
-    return null;
+    return { status: "fallback" };
   }
 };
 
@@ -467,14 +477,28 @@ export async function checkScheduleStatus(): Promise<ScheduleStatus> {
     }
 
     const astraSched = await fetchActiveScheduleFromAstra(day);
-    const schedDef = astraSched ??
-      (day === "minggu" ? undefined : DEFAULT_SCHEDULES[day]) ?? {
-        mulaiMasuk: "06:30",
-        selesaiMasuk: "07:15",
-        mulaiPulang: "15:30",
-        selesaiPulang: "17:00",
-        kompensasiWaktu: 15,
+    if (astraSched.status === "inactive") {
+      return {
+        success: true,
+        timeWindow: "no_schedule",
+        message: "Tidak ada jadwal presensi di hari libur",
       };
+    }
+
+    const schedDef =
+      astraSched.status === "active"
+        ? astraSched.schedule
+        : day === "minggu"
+          ? undefined
+          : DEFAULT_SCHEDULES[day];
+
+    if (!schedDef) {
+      return {
+        success: true,
+        timeWindow: "no_schedule",
+        message: "Tidak ada jadwal presensi di hari libur",
+      };
+    }
 
     const s = {
       hari: day,
@@ -669,6 +693,23 @@ export async function checkAttendanceStatus(
 
     // 5. In Checkout window
     if (sched.timeWindow === "check_out") {
+      if (history.available && !history.hasCheckedIn) {
+        return {
+          success: true,
+          alreadyPresent: false,
+          message: "Siswa belum melakukan absensi masuk hari ini.",
+          data: {
+            userName: userProfile.fullName ?? "Unknown",
+            nis: userProfile.nis ?? cleanNis,
+            className: userProfile.className ?? "-",
+            status: "Tutup",
+            date: displayDate,
+            actionType: "none",
+            actionable: false,
+          },
+        };
+      }
+
       return {
         success: true,
         alreadyPresent: false,
@@ -715,6 +756,7 @@ export async function saveAttendance(
   latitude: number,
   longitude: number,
   _photoPath?: string,
+  checkInStatus: "Hadir" | "Terlambat" = "Hadir",
 ): Promise<AbsenceResult> {
   try {
     const cleanNis = sanitizeNis(nis);
@@ -759,7 +801,12 @@ export async function saveAttendance(
       };
     }
 
-    const statusLabel = actionType === "check_in" ? "Hadir" : "Pulang";
+    const resolvedCheckInStatus =
+      checkInStatus === "Terlambat" || _photoPath === "Terlambat"
+        ? "Terlambat"
+        : "Hadir";
+    const statusLabel =
+      actionType === "check_in" ? resolvedCheckInStatus : "Pulang";
 
     const astraRes = await fetch(
       `${astraApiUrl()}/v1/admin/attendance/manual`,
@@ -854,7 +901,16 @@ export async function checkNisAndCreateAbsence(
       };
     }
 
-    const saveResult = await saveAttendance(nis, actionType, lat, lon);
+    const checkInStatus =
+      statusResult.data?.status === "Terlambat" ? "Terlambat" : "Hadir";
+    const saveResult = await saveAttendance(
+      nis,
+      actionType,
+      lat,
+      lon,
+      undefined,
+      checkInStatus,
+    );
 
     return {
       ...saveResult,
