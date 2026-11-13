@@ -29,3 +29,8 @@
 
 **Rule:** A roster row without a nonblank User ID returns an account-linking error before querying attendance or attempting a write. It cannot inherit another student's history through an empty user filter. Both the check and direct save server actions enforce this boundary.
 **Evidence:** `src/app/(main)/presensi/actions.ts`, `tests/kiosk-identity-actions.test.ts`.
+
+## INV-BRONYA-007 — Kiosk check-out preserves Terlambat and honors schedule state
+
+**Rule:** Kiosk check-out requires an existing check-in, preserves `Terlambat` status rather than overwriting it, and respects inactive weekday schedules.
+**Evidence:** `src/app/(main)/presensi/actions.ts`, `src/app/(main)/presensi/page.tsx`.
