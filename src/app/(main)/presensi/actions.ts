@@ -699,6 +699,23 @@ export async function checkAttendanceStatus(
 
     // 5. In Checkout window
     if (sched.timeWindow === "check_out") {
+      if (!history.hasCheckedIn) {
+        return {
+          success: true,
+          alreadyPresent: false,
+          message: "Siswa belum melakukan absensi masuk hari ini.",
+          data: {
+            userName: userProfile.fullName ?? "Unknown",
+            nis: userProfile.nis ?? cleanNis,
+            className: userProfile.className ?? "-",
+            status: "Tutup",
+            date: displayDate,
+            actionType: "none",
+            actionable: false,
+          },
+        };
+      }
+
       return {
         success: true,
         alreadyPresent: false,
@@ -785,6 +802,12 @@ export async function saveAttendance(
         success: false,
         alreadyPresent: true,
         message: `Siswa ${userProfile.fullName} (${cleanNis}) sudah melakukan presensi masuk hari ini.`,
+      };
+    }
+    if (actionType === "check_out" && !history.hasCheckedIn) {
+      return {
+        success: false,
+        message: "Siswa belum melakukan absensi masuk hari ini.",
       };
     }
     if (actionType === "check_out" && history.hasCheckedOut) {
