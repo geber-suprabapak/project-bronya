@@ -257,3 +257,68 @@ test("check-out requires an existing check-in in both check and direct save acti
     globalThis.fetch = originalFetch;
   }
 });
+
+test("late check-in preserves Terlambat status when posting to Astra", async () => {
+  const originalFetch = globalThis.fetch;
+  const postedPayloads: string[] = [];
+
+  const wib = new Date(
+    new Date().toLocaleString("en-US", { timeZone: "Asia/Jakarta" }),
+  );
+  const currentMins = wib.getHours() * 60 + wib.getMinutes();
+  const formatHhMm = (m: number) =>
+    `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
+
+  // Configure schedule so current WIB minute falls inside the late grace window.
+  const lateEndMins = Math.max(1, currentMins - 1);
+  const graceMins = Math.min(1440, currentMins + 10) - lateEndMins;
+  const checkoutStartMins = Math.min(1439, currentMins + 20);
+
+  globalThis.fetch = async (input, init) => {
+    const url = new URL(input instanceof Request ? input.url : String(input));
+    if (url.pathname === "/v1/admin/students") {
+      return Response.json({
+        success: true,
+        data: [{ user_id: "bound-user", nis: "24003", full_name: "Budi" }],
+      });
+    }
+    if (url.pathname === "/v1/admin/attendance") {
+      return Response.json({ success: true, data: [] });
+    }
+    if (url.pathname === "/v1/admin/schedules") {
+      return Response.json({
+        success: true,
+        data: [
+          {
+            day_of_week: url.searchParams.get("day_of_week"),
+            is_active: true,
+            mulai_masuk: "00:00",
+            selesai_masuk: formatHhMm(lateEndMins),
+            kompensasi_waktu: graceMins,
+            mulai_pulang: formatHhMm(checkoutStartMins),
+            selesai_pulang: "23:59",
+          },
+        ],
+      });
+    }
+    if (url.pathname === "/v1/admin/attendance/manual") {
+      postedPayloads.push(String(init?.body ?? ""));
+      return Response.json({ success: true });
+    }
+    throw new Error(`Unexpected Astra request: ${url.pathname}`);
+  };
+
+  try {
+    if (currentMins >= 2 && currentMins <= 1418) {
+      const result = await checkNisAndCreateAbsence("24003");
+      assert.equal(result.success, true);
+      assert.equal(result.data?.status, "Terlambat");
+      assert.equal(postedPayloads.length, 1);
+      const body = JSON.parse(postedPayloads[0] ?? "{}");
+      assert.equal(body.status, "Terlambat");
+      assert.equal(body.action_type, "check_in");
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});

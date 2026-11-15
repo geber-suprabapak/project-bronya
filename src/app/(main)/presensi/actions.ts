@@ -762,6 +762,7 @@ export async function saveAttendance(
   latitude: number,
   longitude: number,
   _photoPath?: string,
+  checkInStatus?: "Hadir" | "Terlambat",
 ): Promise<AbsenceResult> {
   if (!(await requireKioskOperator())) {
     return {
@@ -818,7 +819,19 @@ export async function saveAttendance(
       };
     }
 
-    const statusLabel = actionType === "check_in" ? "Hadir" : "Pulang";
+    let resolvedCheckInStatus: "Hadir" | "Terlambat" = "Hadir";
+    if (actionType === "check_in") {
+      if (checkInStatus === "Terlambat" || checkInStatus === "Hadir") {
+        resolvedCheckInStatus = checkInStatus;
+      } else {
+        const sched = await checkScheduleStatus();
+        resolvedCheckInStatus =
+          sched.timeWindow === "late" ? "Terlambat" : "Hadir";
+      }
+    }
+
+    const statusLabel =
+      actionType === "check_in" ? resolvedCheckInStatus : "Pulang";
 
     const astraRes = await fetch(
       `${astraApiUrl()}/v1/admin/attendance/manual`,
@@ -919,7 +932,16 @@ export async function checkNisAndCreateAbsence(
       };
     }
 
-    const saveResult = await saveAttendance(nis, actionType, lat, lon);
+    const checkInStatus =
+      statusResult.data?.status === "Terlambat" ? "Terlambat" : "Hadir";
+    const saveResult = await saveAttendance(
+      nis,
+      actionType,
+      lat,
+      lon,
+      undefined,
+      checkInStatus,
+    );
 
     return {
       ...saveResult,
