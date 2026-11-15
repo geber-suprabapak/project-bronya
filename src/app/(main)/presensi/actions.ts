@@ -398,9 +398,14 @@ const getStudentAttendanceToday = async (
   }
 };
 
+type AstraScheduleLookupResult =
+  | { status: "active"; schedule: ScheduleConfig }
+  | { status: "inactive" }
+  | { status: "fallback" };
+
 const fetchActiveScheduleFromAstra = async (
   day: string,
-): Promise<ScheduleConfig | null> => {
+): Promise<AstraScheduleLookupResult> => {
   try {
     const headers = await astraHeaders();
     const res = await fetch(
@@ -410,9 +415,9 @@ const fetchActiveScheduleFromAstra = async (
         signal: AbortSignal.timeout(3000),
       },
     );
-    if (!res.ok) return null;
+    if (!res.ok) return { status: "fallback" };
     const parsed = AstraSchedulesResponseSchema.safeParse(await res.json());
-    if (!parsed.success) return null;
+    if (!parsed.success) return { status: "fallback" };
     const schedules = Array.isArray(parsed.data)
       ? parsed.data
       : parsed.data.data;
@@ -422,7 +427,7 @@ const fetchActiveScheduleFromAstra = async (
         s.is_active !== false &&
         s.isActive !== false,
     );
-    if (!active) return null;
+    if (!active) return { status: "inactive" };
 
     const normalizeTime = (t?: string | null) => (t ? t.slice(0, 5) : null);
 
@@ -447,7 +452,7 @@ const fetchActiveScheduleFromAstra = async (
       normalizeTime(active.end_checkout) ||
       normalizeTime(active.endCheckout);
 
-    if (!mulaiMasuk || !selesaiMasuk) return null;
+    if (!mulaiMasuk || !selesaiMasuk) return { status: "fallback" };
 
     const kompensasi =
       active.kompensasi_waktu ??
@@ -457,14 +462,17 @@ const fetchActiveScheduleFromAstra = async (
       15;
 
     return {
-      mulaiMasuk,
-      selesaiMasuk,
-      mulaiPulang: mulaiPulang ?? "15:30",
-      selesaiPulang: selesaiPulang ?? "17:00",
-      kompensasiWaktu: kompensasi,
+      status: "active",
+      schedule: {
+        mulaiMasuk,
+        selesaiMasuk,
+        mulaiPulang: mulaiPulang ?? "15:30",
+        selesaiPulang: selesaiPulang ?? "17:00",
+        kompensasiWaktu: kompensasi,
+      },
     };
   } catch {
-    return null;
+    return { status: "fallback" };
   }
 };
 
@@ -491,14 +499,28 @@ export async function checkScheduleStatus(): Promise<ScheduleStatus> {
     }
 
     const astraSched = await fetchActiveScheduleFromAstra(day);
-    const schedDef = astraSched ??
-      (day === "minggu" ? undefined : DEFAULT_SCHEDULES[day]) ?? {
-        mulaiMasuk: "06:30",
-        selesaiMasuk: "07:15",
-        mulaiPulang: "15:30",
-        selesaiPulang: "17:00",
-        kompensasiWaktu: 15,
+    if (astraSched.status === "inactive") {
+      return {
+        success: true,
+        timeWindow: "no_schedule",
+        message: "Tidak ada jadwal presensi hari ini",
       };
+    }
+
+    const schedDef =
+      astraSched.status === "active"
+        ? astraSched.schedule
+        : day === "minggu"
+          ? undefined
+          : DEFAULT_SCHEDULES[day];
+
+    if (!schedDef) {
+      return {
+        success: true,
+        timeWindow: "no_schedule",
+        message: "Tidak ada jadwal presensi di hari libur",
+      };
+    }
 
     const s = {
       hari: day,

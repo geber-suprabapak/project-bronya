@@ -322,3 +322,55 @@ test("late check-in preserves Terlambat status when posting to Astra", async () 
     globalThis.fetch = originalFetch;
   }
 });
+
+test("inactive weekday schedule returns no_schedule and blocks kiosk attendance", async () => {
+  const schedulePayloads = [
+    { success: true, data: [] },
+    {
+      success: true,
+      data: [
+        {
+          day_of_week: "senin",
+          is_active: false,
+          mulai_masuk: "06:30",
+          selesai_masuk: "07:15",
+        },
+      ],
+    },
+  ];
+
+  for (const payload of schedulePayloads) {
+    const originalFetch = globalThis.fetch;
+    const paths: string[] = [];
+    globalThis.fetch = async (input) => {
+      const url = new URL(input instanceof Request ? input.url : String(input));
+      paths.push(url.pathname);
+      if (url.pathname === "/v1/admin/students") {
+        return Response.json({
+          success: true,
+          data: [{ user_id: "bound-user", nis: "24003", full_name: "Budi" }],
+        });
+      }
+      if (url.pathname === "/v1/admin/attendance") {
+        return Response.json({ success: true, data: [] });
+      }
+      if (url.pathname === "/v1/admin/schedules") {
+        return Response.json(payload);
+      }
+      throw new Error(`Unexpected Astra request: ${url.pathname}`);
+    };
+
+    try {
+      const sched = await checkScheduleStatus();
+      assert.equal(sched.success, true);
+      assert.equal(sched.timeWindow, "no_schedule");
+
+      const kiosk = await checkNisAndCreateAbsence("24003");
+      assert.equal(kiosk.success, false);
+      assert.equal(kiosk.data?.status, "Tutup");
+      assert(!paths.includes("/v1/admin/attendance/manual"));
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  }
+});
