@@ -232,6 +232,13 @@ const ATTENDANCE_HISTORY_UNAVAILABLE: StudentAttendanceHistory = {
   hasCheckedIn: false,
   hasCheckedOut: false,
 };
+const NisInputSchema = z.string().min(1).max(64);
+const SaveAttendanceInputSchema = z.object({
+  nis: NisInputSchema,
+  actionType: z.enum(["check_in", "check_out"]),
+  latitude: z.number().finite().min(-90).max(90),
+  longitude: z.number().finite().min(-180).max(180),
+});
 const ATTENDANCE_HISTORY_ERROR =
   "Tidak dapat memeriksa riwayat presensi. Silakan coba lagi.";
 const UNAUTHORIZED_OPERATOR_ERROR = "Akses ditolak: sesi operator tidak valid.";
@@ -583,7 +590,14 @@ export async function checkAttendanceStatus(
     };
   }
   try {
-    const cleanNis = sanitizeNis(nis);
+    const parsedNis = NisInputSchema.safeParse(nis);
+    if (!parsedNis.success) {
+      return { success: false, message: "NIS tidak valid" };
+    }
+    const cleanNis = sanitizeNis(parsedNis.data);
+    if (!cleanNis) {
+      return { success: false, message: "NIS tidak valid" };
+    }
     const userProfile = await findUserByNis(cleanNis);
 
     if (!userProfile) {
@@ -793,7 +807,19 @@ export async function saveAttendance(
     };
   }
   try {
+    const validated = SaveAttendanceInputSchema.safeParse({
+      nis,
+      actionType,
+      latitude,
+      longitude,
+    });
+    if (!validated.success) {
+      return { success: false, message: "Input presensi tidak valid" };
+    }
     const cleanNis = sanitizeNis(nis);
+    if (!cleanNis) {
+      return { success: false, message: "NIS tidak valid" };
+    }
     const userProfile = await findUserByNis(cleanNis);
 
     if (!userProfile) {

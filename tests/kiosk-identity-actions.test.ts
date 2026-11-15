@@ -374,3 +374,28 @@ test("inactive weekday schedule returns no_schedule and blocks kiosk attendance"
     }
   }
 });
+
+test("empty or non-numeric NIS and invalid saveAttendance inputs fail closed without Astra fetch", async () => {
+  const astra = mockAstra({ user_id: "bound-user", nis: "24003" });
+  try {
+    for (const invalidNis of ["", "   ", "abc", "]C1"]) {
+      const checkRes = await checkAttendanceStatus(invalidNis, 0, 0);
+      assert.equal(checkRes.success, false);
+      assert.match(checkRes.message, /NIS tidak valid/);
+
+      const kioskRes = await checkNisAndCreateAbsence(invalidNis);
+      assert.equal(kioskRes.success, false);
+
+      const saveRes = await saveAttendance(invalidNis, "check_in", 0, 0);
+      assert.equal(saveRes.success, false);
+    }
+
+    const badCoordRes = await saveAttendance("24003", "check_in", 999, 0);
+    assert.equal(badCoordRes.success, false);
+    assert.match(badCoordRes.message, /Input presensi tidak valid/);
+
+    assert.deepEqual(astra.paths, []);
+  } finally {
+    astra.restore();
+  }
+});
