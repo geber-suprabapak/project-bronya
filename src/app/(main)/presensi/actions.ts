@@ -45,15 +45,48 @@ const sanitizeNis = (input: string) => {
   return clean.replace(/\D/g, "");
 };
 
-const getWibDateStr = (date: Date = new Date()) => {
-  const wib = new Date(
-    date.toLocaleString("en-US", { timeZone: "Asia/Jakarta" }),
+const WIB_PARTS_FORMATTER = new Intl.DateTimeFormat("en-US", {
+  timeZone: "Asia/Jakarta",
+  weekday: "short",
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+  hour: "2-digit",
+  minute: "2-digit",
+  hourCycle: "h23",
+});
+
+const WEEKDAY_TO_ID = new Map<string, (typeof DAYS_ID)[number]>([
+  ["Sun", "minggu"],
+  ["Mon", "senin"],
+  ["Tue", "selasa"],
+  ["Wed", "rabu"],
+  ["Thu", "kamis"],
+  ["Fri", "jumat"],
+  ["Sat", "sabtu"],
+]);
+
+const getWibParts = (date: Date = new Date()) => {
+  const parts = new Map(
+    WIB_PARTS_FORMATTER.formatToParts(date).map((part) => [
+      part.type,
+      part.value,
+    ]),
   );
-  const y = wib.getFullYear();
-  const m = String(wib.getMonth() + 1).padStart(2, "0");
-  const d = String(wib.getDate()).padStart(2, "0");
-  return `${y}-${m}-${d}`;
+  const year = parts.get("year") ?? "1970";
+  const month = parts.get("month") ?? "01";
+  const dayNum = parts.get("day") ?? "01";
+  const hour = Number(parts.get("hour") ?? "0");
+  const minute = Number(parts.get("minute") ?? "0");
+  const day = WEEKDAY_TO_ID.get(parts.get("weekday") ?? "");
+  return {
+    dateStr: `${year}-${month}-${dayNum}`,
+    day,
+    mins: hour * 60 + minute,
+  };
 };
+
+const getWibDateStr = (date: Date = new Date()) => getWibParts(date).dateStr;
 
 export type ScheduleTimeWindow =
   | "before_check_in"
@@ -492,11 +525,7 @@ export async function checkScheduleStatus(): Promise<ScheduleStatus> {
     };
   }
   try {
-    const now = new Date();
-    const wib = new Date(
-      now.toLocaleString("en-US", { timeZone: "Asia/Jakarta" }),
-    );
-    const day = DAYS_ID[wib.getDay()];
+    const { day, mins } = getWibParts(new Date());
     if (!day) {
       return {
         success: true,
@@ -538,7 +567,6 @@ export async function checkScheduleStatus(): Promise<ScheduleStatus> {
       kompensasiWaktu: schedDef.kompensasiWaktu,
     };
 
-    const mins = wib.getHours() * 60 + wib.getMinutes();
     const masukStart = toMinutes(s.mulaiMasuk);
     const masukEnd = toMinutes(s.selesaiMasuk);
     const masukLate = masukEnd + s.kompensasiWaktu;

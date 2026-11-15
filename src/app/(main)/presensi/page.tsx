@@ -162,7 +162,7 @@ export default function IndexPage() {
       if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
       debounceTimerRef.current = setTimeout(() => {
         processAbsence(value);
-      }, 50);
+      }, 120);
     }
   };
 
@@ -470,7 +470,7 @@ export default function IndexPage() {
                 <div className="divide-y">
                   {recentLogs.map((logEntry, index) => (
                     <div
-                      key={logEntry.timestamp}
+                      key={`${logEntry.timestamp}-${logEntry.result.data?.nis ?? "unknown"}`}
                       className={`grid gap-1.5 px-6 py-4 transition-colors hover:bg-muted/50 ${
                         index === 0 ? "bg-muted/30" : ""
                       }`}
