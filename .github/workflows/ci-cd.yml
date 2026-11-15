@@ -1,0 +1,143 @@
+name: CI and Publish
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  pull_request:
+    branches:
+      - main
+      - master
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-publish-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NEXT_TELEMETRY_DISABLED: "1"
+
+jobs:
+  verify:
+    name: Verify (Lint, Typecheck, Audit, Test, Build)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.15.0
+          run_install: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Cache Next.js build cache
+        uses: actions/cache@v4
+        with:
+          path: .next/cache
+          key: ${{ runner.os }}-next-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-next-
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Enforce floor guard (no skipped tests or ts-ignore)
+        run: |
+          if grep -rnE '(\btest\.(skip|only)\b|@ts-ignore)' src/ tests/; then
+            echo "Floor guard violation: skipped/focused tests or @ts-ignore found" >&2
+            exit 1
+          fi
+
+      - name: Check linting and formatting
+        run: pnpm lint
+
+      - name: Run TypeScript typecheck
+        run: pnpm run typecheck
+
+      - name: Run production dependency security audit
+        run: pnpm audit --prod --audit-level=high
+
+      - name: Run unit, contract, and behavioral tests
+        env:
+          NODE_ENV: test
+          ASTRA_API_URL: http://localhost:3000
+          LOGTO_ENDPOINT: http://localhost:3001
+          LOGTO_APP_ID: bronya-ci-app
+          LOGTO_APP_SECRET: bronya-ci-secret-key-at-least-32-chars
+          LOGTO_COOKIE_SECRET: bronya-ci-cookie-secret-at-least-32-chars
+          LOGTO_BASE_URL: http://localhost:3000
+          LOGTO_RESOURCE: https://api.school.example/skanida
+          LOGTO_POST_LOGOUT_REDIRECT_URI: http://localhost:3000/login
+        run: pnpm test
+
+      - name: Build production application
+        env:
+          SKIP_ENV_VALIDATION: "1"
+          NODE_ENV: production
+        run: pnpm run build
+
+  publish:
+    name: Build & Push Docker Image
+    needs: verify
+    if: needs.verify.result == 'success' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=raw,value=latest
+            type=sha,prefix=sha-,format=short
+
+      - name: Build and push image
+        id: push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: runner
+          push: true
+          platforms: linux/amd64
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Publish immutable image reference
+        shell: bash
+        run: |
+          echo "### Published Bronya image" >> "$GITHUB_STEP_SUMMARY"
+          echo "Image: ghcr.io/${{ github.repository }}@${{ steps.push.outputs.digest }}" >> "$GITHUB_STEP_SUMMARY"
