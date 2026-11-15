@@ -529,7 +529,9 @@ test("Challenge 7: Schedule Status & Time Window Computations", () => {
   };
 
   const evaluateSchedule = (day: string, timeStr: string) => {
-    const schedDef = DEFAULT_SCHEDULES[day] ?? {
+    const schedDef = Object.entries(DEFAULT_SCHEDULES).find(
+      ([key]) => key === day,
+    )?.[1] ?? {
       mulaiMasuk: "06:00",
       selesaiMasuk: "23:59",
       mulaiPulang: "11:00",
