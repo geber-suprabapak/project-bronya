@@ -1,4 +1,5 @@
 import { getLogtoContext, handleSignIn } from "@logto/next/server-actions";
+import { isRedirectError } from "next/dist/client/components/redirect-error";
 import { redirect } from "next/navigation";
 import { type NextRequest, NextResponse } from "next/server";
 import {
@@ -18,21 +19,28 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  const callbackUrl = new URL("/api/logto/callback", logtoConfig.baseUrl);
-  callbackUrl.search = request.nextUrl.search;
-  await handleSignIn(logtoConfig, callbackUrl);
+  let destination = "/presensi";
+  try {
+    const callbackUrl = new URL("/api/logto/callback", logtoConfig.baseUrl);
+    callbackUrl.search = request.nextUrl.search;
+    await handleSignIn(logtoConfig, callbackUrl);
 
-  const context = await getLogtoContext(logtoConfig, { fetchUserInfo: true });
-  if (!context.isAuthenticated || !context.claims) {
-    redirect("/login?error=unauthorized");
+    const context = await getLogtoContext(logtoConfig, { fetchUserInfo: true });
+    if (!context.isAuthenticated || !context.claims) {
+      destination = "/login?error=unauthorized";
+    } else {
+      const claims = extractExtendedClaims(context.claims);
+      const role = resolveLogtoRole(claims?.roles);
+      if (!isKioskOperatorRole(role)) {
+        destination = "/login?error=forbidden_role";
+      }
+    }
+  } catch (error) {
+    if (isRedirectError(error)) {
+      throw error;
+    }
+    destination = "/login?error=unauthorized";
   }
 
-  const claims = extractExtendedClaims(context.claims);
-  const role = resolveLogtoRole(claims?.roles);
-
-  if (!isKioskOperatorRole(role)) {
-    redirect("/login?error=forbidden_role");
-  }
-
-  redirect("/presensi");
+  redirect(destination);
 }
