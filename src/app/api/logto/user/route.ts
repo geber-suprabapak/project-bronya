@@ -5,11 +5,18 @@ import {
   isKioskOperatorRole,
   resolveLogtoRole,
 } from "@/lib/logto/claims";
-import { logtoConfig } from "@/lib/logto/config";
+import { isBronyaRuntimeConfigured, logtoConfig } from "@/lib/logto/config";
 
 export const dynamic = "force-dynamic";
 
 export async function GET() {
+  if (process.env.NODE_ENV === "production" && !isBronyaRuntimeConfigured()) {
+    return NextResponse.json(
+      { isAuthenticated: false, user: null },
+      { status: 503 },
+    );
+  }
+
   try {
     const context = await getLogtoContext(logtoConfig, {
       fetchUserInfo: true,

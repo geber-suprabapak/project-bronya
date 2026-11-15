@@ -6,13 +6,17 @@ import {
   isKioskOperatorRole,
   resolveLogtoRole,
 } from "@/lib/logto/claims";
-import { logtoConfig } from "@/lib/logto/config";
+import { isBronyaRuntimeConfigured, logtoConfig } from "@/lib/logto/config";
 
 export const dynamic = "force-dynamic";
 
 export default async function MainLayout({
   children,
 }: Readonly<{ children: ReactNode }>) {
+  if (process.env.NODE_ENV === "production" && !isBronyaRuntimeConfigured()) {
+    redirect("/login?error=session_unavailable");
+  }
+
   const context = await getLogtoContext(logtoConfig).catch(() => null);
   const role = resolveLogtoRole(extractExtendedClaims(context?.claims)?.roles);
 

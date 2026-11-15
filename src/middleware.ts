@@ -6,7 +6,7 @@ import {
   isKioskOperatorRole,
   resolveLogtoRole,
 } from "@/lib/logto/claims";
-import { logtoConfig } from "@/lib/logto/config";
+import { isBronyaRuntimeConfigured, logtoConfig } from "@/lib/logto/config";
 
 const STATIC_ASSET = /\.(?:svg|png|jpg|jpeg|gif|webp|ico|css|js|map)$/;
 
@@ -24,6 +24,16 @@ function isPublicPath(pathname: string): boolean {
 
 export async function middleware(request: NextRequest) {
   const pathname = request.nextUrl.pathname;
+
+  if (process.env.NODE_ENV === "production" && !isBronyaRuntimeConfigured()) {
+    if (!isPublicPath(pathname)) {
+      return NextResponse.redirect(
+        new URL("/login?error=session_unavailable", request.url),
+      );
+    }
+    return NextResponse.next();
+  }
+
   // Logto's edge adapter owns request cookie state. Keep the client scoped to
   // this request instead of sharing mutable state across concurrent requests.
   const logtoClient = new LogtoClient(logtoConfig);
