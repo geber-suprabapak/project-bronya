@@ -1,8 +1,13 @@
 "use server";
 
-import { getAccessToken } from "@logto/next/server-actions";
+import { getAccessToken, getLogtoContext } from "@logto/next/server-actions";
 import { z } from "zod";
 import { env } from "~/env";
+import {
+  extractExtendedClaims,
+  isKioskOperatorRole,
+  resolveLogtoRole,
+} from "~/lib/logto/claims";
 import { logtoConfig } from "~/lib/logto/config";
 
 type AbsenceData = {
@@ -229,6 +234,18 @@ const ATTENDANCE_HISTORY_UNAVAILABLE: StudentAttendanceHistory = {
 };
 const ATTENDANCE_HISTORY_ERROR =
   "Tidak dapat memeriksa riwayat presensi. Silakan coba lagi.";
+const UNAUTHORIZED_OPERATOR_ERROR = "Akses ditolak: sesi operator tidak valid.";
+
+const requireKioskOperator = async (): Promise<boolean> => {
+  try {
+    const context = await getLogtoContext(logtoConfig);
+    if (!context.isAuthenticated) return false;
+    const role = resolveLogtoRole(extractExtendedClaims(context.claims)?.roles);
+    return isKioskOperatorRole(role);
+  } catch {
+    return false;
+  }
+};
 
 const astraApiUrl = (): string => {
   if (!env.ASTRA_API_URL) {
@@ -452,6 +469,13 @@ const fetchActiveScheduleFromAstra = async (
 };
 
 export async function checkScheduleStatus(): Promise<ScheduleStatus> {
+  if (!(await requireKioskOperator())) {
+    return {
+      success: false,
+      timeWindow: "outside",
+      message: UNAUTHORIZED_OPERATOR_ERROR,
+    };
+  }
   try {
     const now = new Date();
     const wib = new Date(
@@ -530,6 +554,12 @@ export async function checkAttendanceStatus(
   _latitude: number,
   _longitude: number,
 ): Promise<AbsenceResult> {
+  if (!(await requireKioskOperator())) {
+    return {
+      success: false,
+      message: UNAUTHORIZED_OPERATOR_ERROR,
+    };
+  }
   try {
     const cleanNis = sanitizeNis(nis);
     const userProfile = await findUserByNis(cleanNis);
@@ -716,6 +746,12 @@ export async function saveAttendance(
   longitude: number,
   _photoPath?: string,
 ): Promise<AbsenceResult> {
+  if (!(await requireKioskOperator())) {
+    return {
+      success: false,
+      message: UNAUTHORIZED_OPERATOR_ERROR,
+    };
+  }
   try {
     const cleanNis = sanitizeNis(nis);
     const userProfile = await findUserByNis(cleanNis);
@@ -826,6 +862,12 @@ const stripActionFields = (data: AbsenceData): StrippedAbsenceData => {
 export async function checkNisAndCreateAbsence(
   nis: string,
 ): Promise<KioskAbsenceResult> {
+  if (!(await requireKioskOperator())) {
+    return {
+      success: false,
+      message: UNAUTHORIZED_OPERATOR_ERROR,
+    };
+  }
   try {
     const lat = env.KIOSK_LATITUDE ?? -7.44998;
     const lon = env.KIOSK_LONGITUDE ?? 110.2236;

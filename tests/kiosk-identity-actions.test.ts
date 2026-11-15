@@ -3,8 +3,18 @@ import { register } from "node:module";
 import test from "node:test";
 
 register(new URL("./fixtures/kiosk-action-loader.mjs", import.meta.url));
-const { checkAttendanceStatus, checkNisAndCreateAbsence, saveAttendance } =
-  await import("../src/app/(main)/presensi/actions.ts");
+const {
+  checkAttendanceStatus,
+  checkNisAndCreateAbsence,
+  checkScheduleStatus,
+  saveAttendance,
+} = await import("../src/app/(main)/presensi/actions.ts");
+
+declare global {
+  var __mockLogtoContext:
+    | { isAuthenticated: boolean; claims?: { roles?: string[] } }
+    | undefined;
+}
 
 const unboundStudent = {
   student_id: "canonical-student-only",
@@ -154,6 +164,40 @@ test("attendance reads fail closed when Astra history is unavailable or malforme
       );
     } finally {
       saveAstra.restore();
+    }
+  }
+});
+
+test("kiosk server actions reject unauthenticated and non-operator callers before calling Astra", async () => {
+  const deniedContexts = [
+    { isAuthenticated: false },
+    { isAuthenticated: true, claims: { roles: ["student"] } },
+  ];
+
+  for (const denied of deniedContexts) {
+    globalThis.__mockLogtoContext = denied;
+    const astra = mockAstra({ user_id: "bound-user", nis: "24003" });
+    try {
+      const sched = await checkScheduleStatus();
+      assert.equal(sched.success, false);
+      assert.match(sched.message, /Akses ditolak/);
+
+      const status = await checkAttendanceStatus("24003", 0, 0);
+      assert.equal(status.success, false);
+      assert.match(status.message, /Akses ditolak/);
+
+      const save = await saveAttendance("24003", "check_in", 0, 0);
+      assert.equal(save.success, false);
+      assert.match(save.message, /Akses ditolak/);
+
+      const kiosk = await checkNisAndCreateAbsence("24003");
+      assert.equal(kiosk.success, false);
+      assert.match(kiosk.message, /Akses ditolak/);
+
+      assert.deepEqual(astra.paths, []);
+    } finally {
+      astra.restore();
+      globalThis.__mockLogtoContext = undefined;
     }
   }
 });
