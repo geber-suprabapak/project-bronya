@@ -141,7 +141,7 @@ export default function IndexPage() {
           };
           setRecentLogs((prev) => [logEntry, ...prev].slice(0, 5));
         }
-      } catch (_error) {
+      } catch {
         setResult({
           success: false,
           message: "Terjadi kesalahan saat memproses data",
