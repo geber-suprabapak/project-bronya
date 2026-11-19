@@ -1,6 +1,7 @@
 "use server";
 
 import { getAccessToken, getLogtoContext } from "@logto/next/server-actions";
+import { SpanKind, SpanStatusCode, trace } from "@opentelemetry/api";
 import { z } from "zod";
 import { env } from "~/env";
 import {
@@ -9,6 +10,13 @@ import {
   resolveLogtoRole,
 } from "~/lib/logto/claims";
 import { logtoConfig } from "~/lib/logto/config";
+import {
+  createRequestId,
+  getServiceName,
+  injectTraceHeaders,
+  safeOperationalPath,
+  writeOperationalEvent,
+} from "~/lib/observability";
 
 type AbsenceData = {
   userName: string;
@@ -337,25 +345,93 @@ const getAstraTokenDiagnostics = (headers: Record<string, string>) => {
   }
 };
 
-const astraHeaders = async (): Promise<Record<string, string>> => {
+const astraHeaders = async (
+  requestId: string = createRequestId(),
+): Promise<Record<string, string>> => {
   // Astra must receive the access token for the currently authenticated Logto
   // operator. A static device token would outlive or outlast the operator's
   // session and could not enforce the user's current Astra scopes.
   const accessToken = await getAccessToken(logtoConfig, env.LOGTO_RESOURCE);
-  return {
+  const headers = new Headers({
     Authorization: `Bearer ${accessToken}`,
     "Content-Type": "application/json",
     "X-Astra-Contract-Version": "v1",
-  };
+    "X-Request-ID": requestId,
+  });
+  injectTraceHeaders(headers);
+  return Object.fromEntries(headers.entries());
+};
+
+const withAstraSpan = async (
+  method: string,
+  path: string,
+  run: (headers: Record<string, string>) => Promise<Response>,
+): Promise<{ response: Response; headers: Record<string, string> }> => {
+  const startedAt = performance.now();
+  const normalizedMethod = method.toUpperCase();
+  const safePath = safeOperationalPath(path) ?? "/";
+  const requestId = createRequestId();
+  const tracer = trace.getTracer(getServiceName());
+
+  return tracer.startActiveSpan(
+    `astra ${normalizedMethod} ${safePath}`,
+    {
+      kind: SpanKind.CLIENT,
+      attributes: {
+        "http.request.method": normalizedMethod,
+        "url.path": safePath,
+        "peer.service": "astra",
+        "request.id": requestId,
+      },
+    },
+    async (span) => {
+      try {
+        const headers = await astraHeaders(requestId);
+        const response = await run(headers);
+        span.setAttribute("http.response.status_code", response.status);
+        span.setStatus({
+          code: response.ok ? SpanStatusCode.OK : SpanStatusCode.ERROR,
+        });
+        writeOperationalEvent({
+          event: "astra.request",
+          outcome: response.ok ? "success" : "failure",
+          requestId,
+          method: normalizedMethod,
+          path: safePath,
+          status: response.status,
+          durationMs: Math.round(performance.now() - startedAt),
+        });
+        return { response, headers };
+      } catch (error) {
+        span.setStatus({ code: SpanStatusCode.ERROR, message: "ASTRA_ERROR" });
+        writeOperationalEvent({
+          event: "astra.request",
+          outcome: "failure",
+          requestId,
+          method: normalizedMethod,
+          path: safePath,
+          durationMs: Math.round(performance.now() - startedAt),
+          error: error instanceof Error ? error.message : "Astra fetch failed",
+        });
+        throw error;
+      } finally {
+        span.end();
+      }
+    },
+  );
 };
 
 const findUserByNis = async (nis: string) => {
   const cleanNis = sanitizeNis(nis);
-  const headers = await astraHeaders();
-  const res = await fetch(`${astraApiUrl()}/v1/admin/students`, {
-    headers,
-    signal: AbortSignal.timeout(3000),
-  });
+  const { response: res, headers } = await withAstraSpan(
+    "GET",
+    "/v1/admin/students",
+    (reqHeaders) =>
+      fetch(`${astraApiUrl()}/v1/admin/students`, {
+        headers: reqHeaders,
+        signal: AbortSignal.timeout(3000),
+      }),
+  );
   if (!res.ok) {
     if (res.status === 401) {
       console.warn(
@@ -396,13 +472,17 @@ const getStudentAttendanceToday = async (
   dateStr: string,
 ): Promise<StudentAttendanceHistory> => {
   try {
-    const headers = await astraHeaders();
-    const res = await fetch(
-      `${astraApiUrl()}/v1/admin/attendance?userId=${encodeURIComponent(userId)}&date=${encodeURIComponent(dateStr)}`,
-      {
-        headers,
-        signal: AbortSignal.timeout(3000),
-      },
+    const { response: res } = await withAstraSpan(
+      "GET",
+      "/v1/admin/attendance",
+      (headers) =>
+        fetch(
+          `${astraApiUrl()}/v1/admin/attendance?userId=${encodeURIComponent(userId)}&date=${encodeURIComponent(dateStr)}`,
+          {
+            headers,
+            signal: AbortSignal.timeout(3000),
+          },
+        ),
     );
     if (!res.ok) return ATTENDANCE_HISTORY_UNAVAILABLE;
     const parsed = AstraAttendanceResponseSchema.safeParse(await res.json());
@@ -447,13 +527,17 @@ const fetchActiveScheduleFromAstra = async (
   day: string,
 ): Promise<AstraScheduleLookupResult> => {
   try {
-    const headers = await astraHeaders();
-    const res = await fetch(
-      `${astraApiUrl()}/v1/admin/schedules?day_of_week=${encodeURIComponent(day)}&is_active=true`,
-      {
-        headers,
-        signal: AbortSignal.timeout(3000),
-      },
+    const { response: res } = await withAstraSpan(
+      "GET",
+      "/v1/admin/schedules",
+      (headers) =>
+        fetch(
+          `${astraApiUrl()}/v1/admin/schedules?day_of_week=${encodeURIComponent(day)}&is_active=true`,
+          {
+            headers,
+            signal: AbortSignal.timeout(3000),
+          },
+        ),
     );
     if (!res.ok) return { status: "fallback" };
     const parsed = AstraSchedulesResponseSchema.safeParse(await res.json());
@@ -909,22 +993,24 @@ export async function saveAttendance(
     const statusLabel =
       actionType === "check_in" ? resolvedCheckInStatus : "Pulang";
 
-    const astraRes = await fetch(
-      `${astraApiUrl()}/v1/admin/attendance/manual`,
-      {
-        method: "POST",
-        headers: await astraHeaders(),
-        body: JSON.stringify({
-          user_id: userProfile.userId,
-          action_type: actionType,
-          status: statusLabel,
-          date: todayStr,
-          latitude,
-          longitude,
-          reason: "Kiosk terminal scan",
+    const { response: astraRes } = await withAstraSpan(
+      "POST",
+      "/v1/admin/attendance/manual",
+      (headers) =>
+        fetch(`${astraApiUrl()}/v1/admin/attendance/manual`, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({
+            user_id: userProfile.userId,
+            action_type: actionType,
+            status: statusLabel,
+            date: todayStr,
+            latitude,
+            longitude,
+            reason: "Kiosk terminal scan",
+          }),
+          signal: AbortSignal.timeout(3000),
         }),
-        signal: AbortSignal.timeout(3000),
-      },
     );
 
     if (!astraRes.ok) {

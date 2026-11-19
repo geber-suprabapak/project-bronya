@@ -22,7 +22,20 @@ const CONTENT_SECURITY_POLICY = [
   "base-uri 'self'",
 ].join("; ");
 
-function withSecurityHeaders(response: NextResponse): NextResponse {
+const SAFE_REQUEST_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
+
+function resolveRequestId(candidate: string | null): string {
+  const normalized = candidate?.trim();
+  return normalized && SAFE_REQUEST_ID.test(normalized)
+    ? normalized
+    : crypto.randomUUID();
+}
+
+function withSecurityHeaders(
+  response: NextResponse,
+  requestId: string,
+): NextResponse {
+  response.headers.set("X-Request-ID", requestId);
   response.headers.set("X-Content-Type-Options", "nosniff");
   response.headers.set("X-Frame-Options", "DENY");
   response.headers.set("Referrer-Policy", "strict-origin-when-cross-origin");
@@ -48,6 +61,7 @@ function isPublicPath(pathname: string): boolean {
 
 export async function middleware(request: NextRequest) {
   const pathname = request.nextUrl.pathname;
+  const requestId = resolveRequestId(request.headers.get("X-Request-ID"));
 
   if (process.env.NODE_ENV === "production" && !isBronyaRuntimeConfigured()) {
     if (!isPublicPath(pathname)) {
@@ -55,9 +69,10 @@ export async function middleware(request: NextRequest) {
         NextResponse.redirect(
           new URL("/login?error=session_unavailable", request.url),
         ),
+        requestId,
       );
     }
-    return withSecurityHeaders(NextResponse.next());
+    return withSecurityHeaders(NextResponse.next(), requestId);
   }
 
   // Logto's edge adapter owns request cookie state. Keep the client scoped to
@@ -72,9 +87,10 @@ export async function middleware(request: NextRequest) {
       if (pathname === "/login") {
         return withSecurityHeaders(
           NextResponse.redirect(new URL("/presensi", request.url)),
+          requestId,
         );
       }
-      return withSecurityHeaders(NextResponse.next());
+      return withSecurityHeaders(NextResponse.next(), requestId);
     }
 
     if (context.isAuthenticated && !isPublicPath(pathname)) {
@@ -82,6 +98,7 @@ export async function middleware(request: NextRequest) {
         NextResponse.redirect(
           new URL("/login?error=forbidden_role", request.url),
         ),
+        requestId,
       );
     }
   } catch (error) {
@@ -93,10 +110,10 @@ export async function middleware(request: NextRequest) {
   if (!isPublicPath(pathname)) {
     const loginUrl = new URL("/login", request.url);
     loginUrl.searchParams.set("redirect", pathname);
-    return withSecurityHeaders(NextResponse.redirect(loginUrl));
+    return withSecurityHeaders(NextResponse.redirect(loginUrl), requestId);
   }
 
-  return withSecurityHeaders(NextResponse.next());
+  return withSecurityHeaders(NextResponse.next(), requestId);
 }
 
 export const config = {

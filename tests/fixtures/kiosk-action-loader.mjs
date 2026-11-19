@@ -17,6 +17,12 @@ export async function resolve(specifier, context, nextResolve) {
       context,
     );
   }
+  if (specifier === "~/lib/observability") {
+    return nextResolve(
+      new URL("../../src/lib/observability.ts", import.meta.url).href,
+      context,
+    );
+  }
   if (stubs.has(specifier)) {
     return {
       url: `data:text/javascript,${encodeURIComponent(stubs.get(specifier))}`,
